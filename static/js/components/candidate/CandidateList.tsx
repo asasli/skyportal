@@ -364,6 +364,15 @@ const CandidateInfo = ({
           ))}
         </InfoRow>
       )}
+      {(candidate.found_by ?? []).map((credit: any) => (
+        <InfoRow key={credit.filter} label="Found by:">
+          <b>{credit.broker}</b>
+          <span>{credit.filter}</span>
+          <a href={credit.url} target="_blank" rel="noopener noreferrer">
+            View on {credit.broker}
+          </a>
+        </InfoRow>
+      ))}
       {candidate.last_detected_at && (
         <InfoRow label="Last detected:">
           <span>
@@ -371,22 +380,24 @@ const CandidateInfo = ({
           </span>
         </InfoRow>
       )}
-      <Box>
-        <b>Coordinates:</b>
-        <Box sx={{ fontWeight: "bold", fontSize: "105%" }}>
-          {ra_to_hours(candidate.ra)} &nbsp;{dec_to_dms(candidate.dec)}
+      {candidate.ra != null && candidate.dec != null && (
+        <Box>
+          <b>Coordinates:</b>
+          <Box sx={{ fontWeight: "bold", fontSize: "105%" }}>
+            {ra_to_hours(candidate.ra)} &nbsp;{dec_to_dms(candidate.dec)}
+          </Box>
+          <Box sx={{ display: "flex", flexWrap: "wrap", columnGap: 1 }}>
+            <span>
+              (&alpha;,&delta;= {candidate.ra.toFixed(3)}, &nbsp;
+              {candidate.dec.toFixed(3)})
+            </span>
+            <span>
+              (l,b= {candidate.gal_lon.toFixed(3)}, &nbsp;
+              {candidate.gal_lat.toFixed(3)})
+            </span>
+          </Box>
         </Box>
-        <Box sx={{ display: "flex", flexWrap: "wrap", columnGap: 1 }}>
-          <span>
-            (&alpha;,&delta;= {candidate.ra.toFixed(3)}, &nbsp;
-            {candidate.dec.toFixed(3)})
-          </span>
-          <span>
-            (l,b= {candidate.gal_lon.toFixed(3)}, &nbsp;
-            {candidate.gal_lat.toFixed(3)})
-          </span>
-        </Box>
-      </Box>
+      )}
       <InfoRow label="MPC:">
         {candidate.is_roid && (
           <Chip

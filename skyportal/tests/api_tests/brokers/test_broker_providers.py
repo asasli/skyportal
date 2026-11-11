@@ -1825,7 +1825,7 @@ def test_a_batch_is_ingested_with_bounded_concurrency(monkeypatch):
 
     live, peak = {"n": 0}, {"n": 0}
 
-    async def fake_ingest(broker, oid, survey, filter_ids, token=None, payload=None):
+    async def fake_ingest(broker, oid, survey, filter_ids, payload=None, token=None):
         live["n"] += 1
         peak["n"] = max(peak["n"], live["n"])
         await asyncio.sleep(0.01)
@@ -1836,7 +1836,7 @@ def test_a_batch_is_ingested_with_bounded_concurrency(monkeypatch):
     monkeypatch.setattr(lasair, "_ingest_object", fake_ingest)
     msgs = [_msg(i, f"O{i}") for i in range(10)] + [_msg(99, "BAD")]
     _finished, work, _unusable = lasair._prepare_batch(msgs, {}, [1])
-    results = asyncio.run(lasair._ingest_batch(None, "LSST", "t", work, 3))
+    results = asyncio.run(lasair._ingest_batch(None, "LSST", work, 3))
     assert peak["n"] <= 3
     assert sum(1 for ok in results.values() if ok) == 10
     assert results[("lasair_2mine", 0, 99)] is False
@@ -1920,6 +1920,20 @@ def test_a_message_without_a_position_is_finished_rather_than_retried():
     assert list(work) == ["B"]
     assert ("lasair_2mine", 0, 1) in finished
     assert unusable["lasair_2mine"] == lasair.NO_POSITION_DETAIL
+
+
+def test_selected_columns_are_ingested_when_boom_can_complete_them():
+    from skyportal.broker_apis import lasair
+
+    columns = FakeKafkaMessage(1, {"diaobjectid": 170, "ra": 1.0, "decl": 2.0})
+    nowhere = FakeKafkaMessage(2, {"objectId": "A", "candidates": [{"jd": 1.0}]})
+    finished, work, unusable = lasair._prepare_batch(
+        [columns, nowhere], {}, [7], read_from_boom=True
+    )
+
+    assert sorted(work) == ["170", "A"]
+    assert not finished
+    assert not unusable
 
 
 def test_lasair_request_retries_on_rate_limit(monkeypatch):
@@ -2037,6 +2051,31 @@ def test_decode_cutout_rejects_a_url_placeholder():
 
     with pytest.raises(ValueError, match="not valid base64"):
         decode_cutout("https://example.test/cutout.fits", "ZTF")
+
+
+def test_edge_padding_recentres_a_clipped_stamp():
+    """A ZTF stamp clipped at the chip edge is padded back to 63x63 on the side
+    that puts the detection at the centre."""
+    import io
+
+    import numpy as np
+    from astropy.io import fits
+
+    from skyportal.broker_apis._thumbnails import edge_padding
+
+    def cutouts(shape, detection=None):
+        data = np.zeros(shape, dtype=np.float32)
+        if detection:
+            data[detection] = 100.0
+        buff = io.BytesIO()
+        fits.PrimaryHDU(data).writeto(buff)
+        return {"cutoutDifference": buff.getvalue()}
+
+    assert edge_padding(cutouts((63, 63), (31, 31)), "ZTF") is None
+    assert edge_padding(cutouts((46, 63), (31, 31)), "ZTF") == ((0, 17), (0, 0))
+    assert edge_padding(cutouts((46, 63), (14, 31)), "ZTF") == ((17, 0), (0, 0))
+    assert edge_padding(cutouts((46, 50), (14, 31)), "ZTF") == ((17, 0), (0, 13))
+    assert edge_padding(cutouts((46, 63), (31, 31)), "LSST") is None
 
 
 def test_lasair_stream_message_object_ids():

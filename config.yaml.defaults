@@ -834,8 +834,7 @@ app:
         xs: [0, 12, 4, 3]
 
     NeedsAttention:
-      # Open obligations rather than events: data another group has asked you
-      # for and has not been answered, and objects you have scheduled that
+      # Open obligations rather than events: objects you have scheduled that
       # another group has scheduled too.
       resizeable: true
       minW: 2
@@ -1045,10 +1044,9 @@ brokers:
   # store still holds for a filter, which its stream may have aged out. Run
   # independently of `ingest_enabled`, since a backfill moves no consumer offset.
   backfill:
-    # Seconds between two upstream object calls. The default suits Lasair's
-    # allowance of 100 an hour; raising it slows a backfill, lowering it risks
-    # spending an allowance the rest of the instance also draws on.
-    min_request_interval: 45
+    # Seconds between two upstream object calls, for a provider that pays one
+    # per object. Lasair does not: it runs one query and reads the rest from BOOM.
+    min_request_interval: 0
     # Objects a single backfill may pull, which bounds how long one runs.
     limit: 1000
 

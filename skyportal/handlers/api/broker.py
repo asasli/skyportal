@@ -2,6 +2,7 @@ import copy
 import datetime
 from typing import Annotated, Any
 
+import requests
 import sqlalchemy as sa
 from pydantic import Field
 from skyportal_py_models.brokers import (
@@ -91,6 +92,29 @@ async def alert_permissions_async(user, session):
     if user.is_system_admin:
         return None
     return survey_permissions((await session.scalars(Stream.select(user))).all())
+
+
+def own_credential(session, broker_id, user_id):
+    return session.scalar(
+        sa.select(BrokerCredential).where(
+            BrokerCredential.broker_id == broker_id,
+            BrokerCredential.user_id == user_id,
+        )
+    )
+
+
+def own_upstream_token(session, broker, user_id):
+    """``{"token": ...}`` for a broker whose upstream accounts are personal, so a
+    user's calls never run on the broker's shared account; ``{}`` for others."""
+    if broker.broker_class.user_credential_schema is None:
+        return {}
+    row = own_credential(session, broker.id, user_id)
+    token = row.altdata.get("token") if row is not None else None
+    if not token:
+        raise ValueError(
+            f"Add your own {broker.name} API token on the broker's page first."
+        )
+    return {"token": token}
 
 
 def strip_secrets(altdata, paths):
@@ -515,6 +539,9 @@ class BrokerAlertsHandler(BaseHandler):
             params["permissions"] = alert_permissions(self.current_user, session)
 
             try:
+                params.update(
+                    own_upstream_token(session, broker, self.associated_user_object.id)
+                )
                 data = broker.broker_class.query_alerts(broker, session, **params)
             except NotImplementedError:
                 return self.error(
@@ -703,6 +730,9 @@ class BrokerConeSearchHandler(BaseHandler):
                     query.radius,
                     session,
                     radius_units=query.radius_units,
+                    **own_upstream_token(
+                        session, broker, self.associated_user_object.id
+                    ),
                 )
             except Exception as e:
                 return self.error(f"Error cross-matching with {broker.name}: {e}")
@@ -1000,12 +1030,19 @@ class BrokerFilterTestHandler(BaseHandler):
                 from ...utils.gcn_crossmatch import with_event_region
 
                 params = with_event_region(session, self.current_user, params)
+                params.update(
+                    own_upstream_token(session, broker, self.associated_user_object.id)
+                )
             except ValueError as e:
                 return self.error(str(e))
             try:
                 data = await IOLoop.current().run_in_executor(
                     None,
                     lambda: broker.broker_class.test_filter(broker, session, **params),
+                )
+            except requests.ConnectionError:
+                return self.error(
+                    f"Could not reach {broker.name}. Check the endpoint in its settings."
                 )
             except Exception as e:
                 return self.error(f"Error running filter on {broker.name}: {e}")
@@ -1495,7 +1532,7 @@ class BrokerFiltersHandler(BaseHandler):
                 ).first()
                 if f is None:
                     return self.error(f"Cannot find a filter with ID: {filter_id}.")
-                query = body.query or {}
+                query = broker.broker_class.compile_query(broker, body.query or {})
                 selected = (query.get("selected") or "").strip()
                 tables = (query.get("tables") or "").strip()
                 conditions = (query.get("conditions") or "").strip()
@@ -1507,11 +1544,41 @@ class BrokerFiltersHandler(BaseHandler):
                 if "autosave" in body.model_fields_set:
                     f.autosave = bool(body.autosave)
                 ad = dict(f.altdata) if isinstance(f.altdata, dict) else {}
-                ad["lasair"] = {
+                saved = {
                     "selected": selected,
                     "tables": tables,
                     "conditions": conditions,
                 }
+                if query.get("tree") is not None:
+                    saved["tree"] = query["tree"]
+                published = (ad.get("lasair") or {}).get("published")
+                if query.get("publish") or query.get("topic"):
+                    user_id = self.associated_user_object.id
+                    try:
+                        token = own_upstream_token(session, broker, user_id)
+                        row = own_credential(session, broker.id, user_id)
+                        if query.get("publish"):
+                            published = broker.broker_class.publish_filter(
+                                broker, f.name, saved, **token
+                            )
+                        else:
+                            published = broker.broker_class.link_filter(
+                                broker,
+                                query.get("name") or f.name,
+                                query["topic"],
+                                row.as_credential_set(),
+                            )
+                    except Exception as e:
+                        return self.error(f"Could not link the filter to Lasair: {e}")
+                    topic = isinstance(published, dict) and published.get("topic")
+                    if topic and row is not None:
+                        row.topics = sorted({*(row.topics or []), topic})
+                        routing = dict(row.topic_filter_ids or {})
+                        routing[topic] = sorted({*routing.get(topic, []), f.id})
+                        row.topic_filter_ids = routing
+                if published:
+                    saved["published"] = published
+                ad["lasair"] = saved
                 f.altdata = ad
                 flag_modified(f, "altdata")
                 session.commit()
@@ -2314,6 +2381,15 @@ class BrokerFilterBackfillHandler(BaseHandler):
                 return self.error(
                     f"Filter {filter_id} has no saved query to backfill from."
                 )
+            user_id = self.associated_user_object.id
+            try:
+                await session.run_sync(
+                    lambda sync_session: own_upstream_token(
+                        sync_session, broker, user_id
+                    )
+                )
+            except ValueError as e:
+                return self.error(str(e))
 
         accepted, message = await IOLoop.current().run_in_executor(
             None,
