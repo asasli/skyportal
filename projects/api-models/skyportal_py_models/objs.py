@@ -62,10 +62,11 @@ class ObjMPCPostBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    obscode: str = Field(
-        default="500",
-        description="Minor planet center observatory code. "
-        "Defaults to 500, corresponds to geocentric.",
+    obscode: str | None = Field(
+        default=None,
+        description="Minor planet center observatory code. Defaults to the "
+        "code of the telescope behind the detection closest to the date, or "
+        "500 (geocentric) when it has none.",
     )
     date: str | None = Field(
         default=None,
@@ -112,6 +113,9 @@ class ObjBody(BaseModel):
     redshift: float | None = Field(None, description="Redshift.")
     redshift_error: float | None = Field(None, description="Redshift error.")
     redshift_origin: str | None = Field(None, description="Redshift source.")
+    redshift_type: Literal["spectroscopic", "photometric"] | None = Field(
+        None, description="Whether the redshift is spectroscopic or photometric."
+    )
     redshift_history: Any = Field(
         None, description="Record of who set which redshift values and when."
     )

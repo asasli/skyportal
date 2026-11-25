@@ -8,6 +8,11 @@ from playwright.sync_api import expect
 from baselayer.app.config import load_config
 from skyportal.models import DBSession
 from skyportal.tests import api, expect_vega_plot
+from skyportal.tests.test_util import (
+    PLAYWRIGHT_BASE_URL,
+    PLAYWRIGHT_DEFAULT_TIMEOUT_MS,
+    playwright_login,
+)
 
 cfg = load_config()
 
@@ -293,17 +298,31 @@ def test_feature_announcement_shown_once(page, user, public_source):
     DBSession().add(user)
     DBSession().commit()
 
-    page.goto(f"/become_user/{user.id}")
-    page.goto(f"/source/{public_source.id}")
-    announcement = page.locator('//*[text()="Comments are now a chat"]').first
-    expect(announcement).to_be_visible()
-    page.locator('//button[text()="Got it"]').first.click()
-    expect(announcement).to_be_hidden()
+    # Own context: the frozen clock would otherwise stay on the shared page.
+    context = page.context.browser.new_context(
+        base_url=PLAYWRIGHT_BASE_URL, viewport={"width": 1920, "height": 1200}
+    )
+    context.set_default_timeout(PLAYWRIGHT_DEFAULT_TIMEOUT_MS)
+    try:
+        own_page = context.new_page()
+        # Late enough for the earlier site-wide announcements to have expired.
+        own_page.clock.set_fixed_time(datetime(2026, 12, 10))
+        playwright_login(own_page)
+        own_page.goto(f"/become_user/{user.id}")
+        own_page.goto(f"/source/{public_source.id}")
+        announcement = own_page.locator('//*[text()="Several quick saves"]').first
+        expect(announcement).to_be_visible()
+        own_page.locator('//button[text()="Got it"]').first.click()
+        expect(announcement).to_be_hidden()
 
-    page.reload()
-    expect(page.locator('//div[@data-testid="source-chat"]').first).to_be_visible()
-    page.wait_for_timeout(2000)
-    expect(announcement).to_be_hidden()
+        own_page.reload()
+        expect(
+            own_page.locator('//div[@data-testid="source-chat"]').first
+        ).to_be_visible()
+        own_page.wait_for_timeout(2000)
+        expect(announcement).to_be_hidden()
+    finally:
+        context.close()
 
 
 def test_view_only_user_cannot_comment(page, view_only_user, public_source):
@@ -378,7 +397,8 @@ def test_super_user_can_delete_unowned_comment(
 def test_show_starlist(page, user, public_source):
     page.goto(f"/become_user/{user.id}")
     page.goto(f"/source/{public_source.id}")
-    page.locator('//button[text()="Show Starlist"]').first.click()
+    page.locator('//button[normalize-space(text())="Observing"]').first.click()
+    page.get_by_role("menuitem", name="Show starlist").click()
     expect(page.locator("//pre[text()[contains(., '_k1')]]").first).to_be_visible()
 
 
@@ -429,7 +449,8 @@ def test_centroid_plot(
 def test_dropdown_facility_change(page, user, public_source):
     page.goto(f"/become_user/{user.id}")
     page.goto(f"/source/{public_source.id}")
-    page.locator('//*[text()="Show Starlist"]').first.click()
+    page.locator('//button[normalize-space(text())="Observing"]').first.click()
+    page.get_by_role("menuitem", name="Show starlist").click()
     expect(page.locator("//pre[text()[contains(., 'raoffset')]]").first).to_be_visible()
     page.locator('//*[@id="mui-component-select-StarListSelectElement"]').first.click()
     page.locator('//li[@data-value="P200"]').first.click()
@@ -441,7 +462,7 @@ def test_source_notification(page, user, public_group, public_source):
     page.goto(f"/source/{public_source.id}")
     expect(page.locator(f'//h6[text()="{public_source.id}"]').first).to_be_visible()
 
-    page.locator("//div[@id='selectGroups']").first.click()
+    page.locator("//*[@id='selectGroups']").first.click()
     page.locator(f'//div[@data-testid="group_{public_group.id}"]').first.click()
     page.keyboard.press("Escape")
     page.locator("//label[@data-testid='soft']").first.click()
@@ -511,33 +532,29 @@ def test_update_redshift_and_history(page, user, public_source):
     page.goto(f"/become_user/{user.id}")
     page.goto(f"/source/{public_source.id}")
     expect(page.locator(f'//h6[text()="{public_source.id}"]').first).to_be_visible()
-    page.locator("//*[@data-testid='updateRedshiftIconButton']").first.click()
+    page.locator("//*[@data-testid='redshiftChip']").first.click()
     page.locator("//div[@data-testid='updateRedshiftTextfield']//input").first.fill(
         "0.9999"
     )
     page.locator(
         "//div[@data-testid='updateRedshiftErrorTextfield']//input"
     ).first.fill("0.0001")
+    page.locator("//button[@data-testid='redshiftType_spectroscopic']").first.click()
     page.locator("//button[@data-testid='updateRedshiftSubmitButton']").first.click()
     expect(
         page.locator("//*[text()='Source redshift successfully updated.']").first
     ).to_be_visible()
-    page.keyboard.press("Escape")  # Close dialog
     expect(page.locator("//*[contains(., '0.9999')]").first).to_be_visible()
     expect(page.locator("//*[contains(., '0.0001')]").first).to_be_visible()
 
-    page.locator("//*[@data-testid='redshiftHistoryIconButton']").first.click()
+    page.locator("//*[@data-testid='redshiftChip']").first.click()
+    history = "//*[@data-testid='redshiftHistory']"
     expect(
-        page.locator("//*[@role='columnheader' and @data-field='set_by_user_id']").first
+        page.locator(f"{history}//*[text()='0.9999 ± 0.0001']").first
     ).to_be_visible()
+    expect(page.locator(f"{history}//*[text()='spec-z']").first).to_be_visible()
     expect(
-        page.locator("//div[@role='gridcell' and text()='0.9999']").first
-    ).to_be_visible()
-    expect(
-        page.locator("//div[@role='gridcell' and text()='0.0001']").first
-    ).to_be_visible()
-    expect(
-        page.locator(f"//div[@role='gridcell']//*[text()='{user.username}']").first
+        page.locator(f"{history}//*[text()='{user.username}']").first
     ).to_be_visible()
 
 
@@ -546,26 +563,23 @@ def test_update_redshift_and_history_without_error(page, user, public_source):
     page.goto(f"/become_user/{user.id}")
     page.goto(f"/source/{public_source.id}")
     expect(page.locator(f'//h6[text()="{public_source.id}"]').first).to_be_visible()
-    page.locator("//*[@data-testid='updateRedshiftIconButton']").first.click()
+    page.locator("//*[@data-testid='redshiftChip']").first.click()
     page.locator("//div[@data-testid='updateRedshiftTextfield']//input").first.fill(
         "0.9998"
     )
+    page.locator("//button[@data-testid='redshiftType_photometric']").first.click()
     page.locator("//button[@data-testid='updateRedshiftSubmitButton']").first.click()
     expect(
         page.locator("//*[text()='Source redshift successfully updated.']").first
     ).to_be_visible()
-    page.keyboard.press("Escape")  # Close dialog
     expect(page.locator("//*[contains(., '0.9998')]").first).to_be_visible()
 
-    page.locator("//*[@data-testid='redshiftHistoryIconButton']").first.click()
+    page.locator("//*[@data-testid='redshiftChip']").first.click()
+    history = "//*[@data-testid='redshiftHistory']"
+    expect(page.locator(f"{history}//*[text()='0.9998']").first).to_be_visible()
+    expect(page.locator(f"{history}//*[text()='photo-z']").first).to_be_visible()
     expect(
-        page.locator("//*[@role='columnheader' and @data-field='set_by_user_id']").first
-    ).to_be_visible()
-    expect(
-        page.locator("//div[@role='gridcell' and text()='0.9998']").first
-    ).to_be_visible()
-    expect(
-        page.locator(f"//div[@role='gridcell']//*[text()='{user.username}']").first
+        page.locator(f"{history}//*[text()='{user.username}']").first
     ).to_be_visible()
 
 

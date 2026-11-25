@@ -41,6 +41,7 @@ from skyportal.enum_types import (
     ALLOWED_BANDPASSES,
     ALLOWED_MAGSYSTEMS,
     ALLOWED_SPECTRUM_TYPES,
+    ASSIGNMENT_PURPOSES,
     default_spectrum_type,
     force_render_enum_markdown,
     py_allowed_bandpasses,
@@ -1177,6 +1178,11 @@ class AssignmentSchema(_Schema):
     comment = fields.String(
         metadata={"description": "An optional comment describing the request."}
     )
+    purpose = fields.String(
+        allow_none=True,
+        validate=validate.OneOf(ASSIGNMENT_PURPOSES),
+        metadata={"description": "Purpose of the assignment."},
+    )
 
 
 class ObservationExternalAPIHandlerPost(_Schema):
@@ -1967,6 +1973,14 @@ class SpectrumAsciiFilePostJSON(SpectrumAsciiFileParseJSON):
         load_default=None,
     )
 
+    auto_report_to_tns = fields.Boolean(
+        required=False,
+        load_default=False,
+        metadata={
+            "description": "Whether a classification resting on this spectrum may be reported to TNS automatically."
+        },
+    )
+
     followup_request_id = fields.Integer(
         required=False,
         metadata={
@@ -2062,6 +2076,13 @@ class SpectrumPost(_Schema):
         metadata={"description": "Free text provided as an external observer"},
         required=False,
         load_default=None,
+    )
+
+    auto_report_to_tns = fields.Boolean(
+        required=False,
+        metadata={
+            "description": "Whether a classification resting on this spectrum may be reported to TNS automatically."
+        },
     )
 
     origin = fields.String(
@@ -2300,6 +2321,15 @@ class FilterListItem(_Schema):
             "description": "Whether objects passing this filter are auto-saved as "
             "Sources to the Filter's Group."
         }
+    )
+    moving_objects = fields.Boolean(
+        metadata={
+            "description": "Whether the scanning page opens on the moving objects "
+            "view for this filter."
+        }
+    )
+    active = fields.Boolean(
+        metadata={"description": "False once the filter was deactivated."}
     )
     created_at = fields.DateTime()
     modified = fields.DateTime()

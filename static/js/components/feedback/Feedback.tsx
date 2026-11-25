@@ -10,6 +10,8 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import IconButton from "@mui/material/IconButton";
+import Link from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
@@ -31,17 +33,20 @@ import UndoIcon from "@mui/icons-material/Undo";
 import AssignIcon from "@mui/icons-material/AssignmentIndOutlined";
 import UnassignIcon from "@mui/icons-material/PersonRemoveOutlined";
 import TakeOverIcon from "@mui/icons-material/SwapHoriz";
+import AddLinkIcon from "@mui/icons-material/AddLink";
+import CloseIcon from "@mui/icons-material/Close";
 
 import { showNotification } from "baselayer/components/Notifications";
 import Button from "../Button";
 import UserAvatar, { getUserRealName } from "../user/UserAvatar";
 import { useAppDispatch } from "../../types/hooks";
-import { useGetProfileQuery } from "../../ducks/profile";
+import { useGetProfileQuery, useHasPermission } from "../../ducks/profile";
 import {
   useAddFeedbackMutation,
   useGetFeedbackQuery,
   useReplyToFeedbackMutation,
   useUpdateFeedbackMutation,
+  statusOf,
   type Feedback,
   type FeedbackCategory,
 } from "../../ducks/feedback";
@@ -74,13 +79,6 @@ const STATUSES = {
 } as const;
 
 type Status = keyof typeof STATUSES;
-
-const statusOf = (message: Feedback): Status => {
-  if (message.resolved) return "resolved";
-  const replies = message.replies ?? [];
-  const last = replies[replies.length - 1];
-  return last && last.author.id !== message.author.id ? "answered" : "open";
-};
 
 const nameOf = (user: Feedback["author"]) =>
   getUserRealName(user.first_name, user.last_name) || user.username;
@@ -175,7 +173,7 @@ const TextSend = ({
   );
 };
 
-const FeedbackForm = ({ title }: { title: string }) => {
+const FeedbackForm = () => {
   const [category, setCategory] = useState<FeedbackCategory>("bug");
   const [addFeedback, { isLoading }] = useAddFeedbackMutation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -184,8 +182,7 @@ const FeedbackForm = ({ title }: { title: string }) => {
   return (
     <Stack spacing={2}>
       <Typography variant="body2" color="text.secondary">
-        Found a bug, or want something to change? Leave a message to the admins
-        of {title}.
+        Found a bug, or want something to change? Leave a message to the admins.
       </Typography>
       <ToggleButtonGroup
         exclusive
@@ -283,6 +280,126 @@ const AssignButton = ({ message }: { message: Feedback }) => {
   );
 };
 
+// "https://github.com/owner/repo/pull/12" -> "owner/repo#12"
+const prLabel = (url: string) =>
+  url.replace(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/, "$1#$2");
+
+const PullRequests = ({
+  message,
+  isAdmin,
+}: {
+  message: Feedback;
+  isAdmin: boolean;
+}) => {
+  const [updateFeedback] = useUpdateFeedbackMutation();
+  const pullRequests = message.pull_requests ?? [];
+  if (!pullRequests.length) return null;
+  const urls = pullRequests.map(({ url }) => url);
+
+  return (
+    <Stack
+      direction="row"
+      sx={{ mt: 1, flexWrap: "wrap", columnGap: 1, alignItems: "center" }}
+    >
+      {pullRequests.map(({ url, deployed }) => (
+        <Box
+          key={url}
+          sx={{
+            display: "inline-flex",
+            alignItems: "center",
+            "& .unlink": { display: "none" },
+            "&:hover .unlink, &:focus-within .unlink": {
+              display: "inline-flex",
+            },
+            // no hover on touch screens
+            "@media (hover: none)": { "& .unlink": { display: "inline-flex" } },
+          }}
+        >
+          <Tooltip
+            title={`${prLabel(url)}: ${deployed ? "deployed" : "not deployed yet"}`}
+          >
+            <Link
+              variant="body2"
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              sx={{ fontWeight: "bold" }}
+            >
+              {`#${url.split("/").pop()}`}
+            </Link>
+          </Tooltip>
+          {isAdmin && (
+            <Tooltip title="Unlink">
+              <IconButton
+                className="unlink"
+                size="small"
+                aria-label={`Unlink ${prLabel(url)}`}
+                onClick={() =>
+                  updateFeedback({
+                    id: message.id,
+                    pr_urls: urls.filter((other) => other !== url),
+                  })
+                }
+              >
+                <CloseIcon sx={{ fontSize: "0.9rem" }} />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Box>
+      ))}
+      {message.deployed_at && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ alignSelf: "center" }}
+        >
+          Deployed <Posted at={message.deployed_at} />
+        </Typography>
+      )}
+    </Stack>
+  );
+};
+
+const LinkPullRequest = ({
+  message,
+  onDone,
+}: {
+  message: Feedback;
+  onDone: () => void;
+}) => {
+  const [url, setUrl] = useState("");
+  const [updateFeedback, { isLoading }] = useUpdateFeedbackMutation();
+  const urls = (message.pull_requests ?? []).map((pr) => pr.url);
+
+  return (
+    <Stack direction="row" spacing={1} sx={{ mt: 1.5, alignItems: "center" }}>
+      <TextField
+        size="small"
+        label="Pull request URL"
+        placeholder="https://github.com/skyportal/skyportal/pull/1234"
+        value={url}
+        onChange={(event) => setUrl(event.target.value)}
+        sx={{ flexGrow: 1 }}
+      />
+      <Button
+        async
+        loading={isLoading}
+        disabled={!url.trim()}
+        onClick={async () => {
+          await updateFeedback({
+            id: message.id,
+            pr_urls: [...urls, url.trim()],
+          }).unwrap();
+          setUrl("");
+          onDone();
+        }}
+      >
+        Link
+      </Button>
+    </Stack>
+  );
+};
+
 const Message = ({
   message,
   isAdmin,
@@ -291,6 +408,7 @@ const Message = ({
   isAdmin: boolean;
 }) => {
   const [replying, setReplying] = useState(false);
+  const [linking, setLinking] = useState(false);
   const { data: profile } = useGetProfileQuery();
   const [updateFeedback] = useUpdateFeedbackMutation();
   const [replyToFeedback, { isLoading }] = useReplyToFeedbackMutation();
@@ -331,6 +449,7 @@ const Message = ({
           <Typography variant="body2" sx={{ mt: 0.75, whiteSpace: "pre-wrap" }}>
             {message.text}
           </Typography>
+          <PullRequests message={message} isAdmin={isAdmin} />
           {(message.replies ?? []).map((reply) => (
             <Stack
               key={reply.id}
@@ -382,6 +501,12 @@ const Message = ({
               />
             </Stack>
           )}
+          {linking && (
+            <LinkPullRequest
+              message={message}
+              onDone={() => setLinking(false)}
+            />
+          )}
           {(isAdmin || isAuthor) && (
             <Stack
               direction="row"
@@ -397,6 +522,13 @@ const Message = ({
               </Button>
               {isAdmin && (
                 <>
+                  <Button
+                    size="small"
+                    endIcon={<AddLinkIcon />}
+                    onClick={() => setLinking(!linking)}
+                  >
+                    {linking ? "Cancel" : "Link PR"}
+                  </Button>
                   <AssignButton message={message} />
                   <Button
                     size="small"
@@ -475,21 +607,21 @@ const MessageList = ({
   );
 };
 
-const FeedbackTab = ({
-  title,
-  isAdmin,
-}: {
-  title: string;
-  isAdmin: boolean;
-}) => {
+const FeedbackPage = () => {
+  const isAdmin = useHasPermission("System admin");
   const { data: messages = [] } = useGetFeedbackQuery();
 
   return (
-    <Stack spacing={3}>
-      <FeedbackForm title={title} />
-      <MessageList messages={messages} isAdmin={isAdmin} />
-    </Stack>
+    <Paper variant="outlined" sx={{ p: { xs: 2, md: 3 }, borderRadius: 2 }}>
+      <Stack spacing={3}>
+        <Typography variant="h5" sx={{ fontWeight: 700 }}>
+          Feedback
+        </Typography>
+        <FeedbackForm />
+        <MessageList messages={messages} isAdmin={isAdmin} />
+      </Stack>
+    </Paper>
   );
 };
 
-export default FeedbackTab;
+export default FeedbackPage;

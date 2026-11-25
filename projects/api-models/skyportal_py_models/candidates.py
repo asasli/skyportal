@@ -40,6 +40,36 @@ class CandidateAssociatedObjResponse(BaseModel):
     super_obj_name: str | None = None
 
 
+class CandidateSuperObjResponse(BaseModel):
+    """A ``SuperObj`` the candidate belongs to."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    name: str | None = None
+    is_roid: bool | None = None
+
+
+class CandidateFoundByResponse(BaseModel):
+    """Credit to the broker filter that passed the candidate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    broker: str
+    filter: str | None = None
+    url: str | None = None
+
+
+class CandidateGcnMatchResponse(BaseModel):
+    """A GCN event the candidate was matched to (a ``GcnEventObj``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dateobs: datetime
+    status: Literal["pending", "confirmed", "ambiguous", "rejected"]
+    localization_name: str | None = None
+
+
 class CandidateResponse(BaseModel):
     """An object that passed a filter: the serialized ``Obj`` columns plus
     the scanning extras the candidate endpoints graft onto them."""
@@ -63,6 +93,7 @@ class CandidateResponse(BaseModel):
     redshift: float | None = None
     redshift_error: float | None = None
     redshift_origin: str | None = None
+    redshift_type: Literal["spectroscopic", "photometric"] | None = None
     redshift_history: list[dict[str, Any]] | None = None
     host_id: int | None = None
     summary: str | None = None
@@ -84,7 +115,6 @@ class CandidateResponse(BaseModel):
     origin: str | None = None
     alias: list[str] | None = None
     healpix: int | None = None
-    detect_photometry_count: int | None = None
     internal_key: str | None = None
 
     # Relationships the handlers eager-load.
@@ -97,6 +127,11 @@ class CandidateResponse(BaseModel):
     saved_groups: list[GroupResponse] | None = None
     classifications: list[ClassificationResponse] | None = None
     passing_group_ids: list[int] | None = None
+    broker_id: int | None = None
+    found_by: list[CandidateFoundByResponse] | None = None
+    super_objs: list[CandidateSuperObjResponse] | None = None
+    comment_count: int | None = None
+    bot_comment_count: int | None = None
     filter_ids: list[int] | None = None
     passing_alerts: list[CandidatePassingAlertResponse] | None = None
     tags: list[ObjTagResponse] | None = None
@@ -107,6 +142,7 @@ class CandidateResponse(BaseModel):
     followup_requests: list[dict[str, Any]] | None = None
     associated_objs: list[CandidateAssociatedObjResponse] | None = None
     stack_id: str | None = None
+    gcn_matches: list[CandidateGcnMatchResponse] | None = None
     last_detected_at: datetime | None = None
     gal_lon: float | None = None
     gal_lat: float | None = None
@@ -236,6 +272,7 @@ class CandidatePost(BaseModel):
     redshift: float | None = None
     redshift_error: float | None = None
     redshift_origin: str | None = None
+    redshift_type: Literal["spectroscopic", "photometric"] | None = None
     host_id: int | None = None
     summary: str | None = None
     altdata: dict[str, Any] | None = None
@@ -251,7 +288,6 @@ class CandidatePost(BaseModel):
     score: float | None = None
     origin: str | None = None
     alias: list[str] | None = None
-    detect_photometry_count: int | None = None
 
 
 class ScanReportPassedFiltersRange(BaseModel):
@@ -458,6 +494,13 @@ class CandidateGetQuery(BaseModel):
             "Comma-separated string of JSON objects representing annotation filters. "
             "Filter objects are expected to have keys { origin, key, value } for "
             "non-numeric value types, or { origin, key, min, max } for numeric values."
+        ),
+    )
+    movingObjects: bool | None = Field(
+        default=None,
+        description=(
+            "If true, return only moving objects: known solar system bodies and "
+            "linked tracks."
         ),
     )
     includePhotometry: bool = Field(
@@ -822,6 +865,8 @@ __all__ = [
     "CandidateAssociatedObjResponse",
     "CandidateFilterGetQuery",
     "CandidateFilterPageResponse",
+    "CandidateFoundByResponse",
+    "CandidateGcnMatchResponse",
     "CandidateGetQuery",
     "CandidatePassingAlertResponse",
     "CandidatePost",
@@ -829,6 +874,7 @@ __all__ = [
     "CandidatePostResponse",
     "CandidateRecordResponse",
     "CandidateResponse",
+    "CandidateSuperObjResponse",
     "CandidatesPageResponse",
     "SAVED_STATUSES",
     "ScanReportGetQuery",

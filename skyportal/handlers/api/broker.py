@@ -20,6 +20,7 @@ from skyportal_py_models.brokers import (
     BrokerFiltersPostBody,
     BrokerFilterTestBody,
     BrokerFilterValidateBody,
+    BrokerHostsGetQuery,
     BrokerPatchBody,
     BrokerPhotometryGetQuery,
     BrokerPostBody,
@@ -506,9 +507,10 @@ class BrokerAlertsHandler(BaseHandler):
         """
         ---
         summary: Query broker alerts
-        description: Search a broker's alerts by objectId, candid or
-          ra/dec/radius. Records come back as the broker's provider returns
-          them, and jd_start/jd_end apply only where the provider supports them.
+        description: Search a broker's alerts by objectId, candid, solar system
+          object designation or ra/dec/radius. Records come back as the
+          broker's provider returns them, and jd_start/jd_end apply only where
+          the provider supports them.
         tags:
           - brokers
         responses:
@@ -982,6 +984,62 @@ class BrokerDefaultPhotometryHandler(BrokerPhotometryHandler):
             )
 
 
+class BrokerDefaultHostsHandler(BaseHandler):
+    @auth_or_token
+    async def get(self, *, query: BrokerHostsGetQuery = None):
+        """
+        ---
+        summary: Get the host galaxies of objects via the default broker
+        description: |
+          Best host galaxy the broker flagged ``default_crossmatch`` associated
+          with each object the requester can read, keyed by object id. Objects
+          without a host are left out, and the result is null when no such
+          broker serves hosts or it cannot be reached.
+        tags:
+          - brokers
+        responses:
+          200:
+            content:
+              application/json:
+                schema: Success
+          400:
+            content:
+              application/json:
+                schema: Error
+        """
+        query = self.parse_query(BrokerHostsGetQuery)
+        object_ids = [i.strip() for i in query.objectIds.split(",") if i.strip()]
+
+        async with self.AsyncSession() as session:
+            broker = await session.scalar(
+                Broker.select(self.current_user).where(
+                    Broker.active.is_(True), Broker.default_crossmatch.is_(True)
+                )
+            )
+            if broker is None or not broker.broker_class.implements()["get_hosts"]:
+                return self.success(data=None)
+            readable = (
+                await session.scalars(
+                    Obj.select(self.associated_user_object, columns=[Obj.id]).where(
+                        Obj.id.in_(object_ids)
+                    )
+                )
+            ).all()
+            if not readable:
+                return self.success(data={})
+            session.expunge(broker)
+
+        try:
+            data = await IOLoop.current().run_in_executor(
+                None,
+                lambda: broker.broker_class.get_hosts(broker, readable, None),
+            )
+        except Exception as e:
+            log(f"{broker.name} host lookup failed: {e}")
+            data = None
+        return self.success(data=data)
+
+
 class BrokerFilterTestHandler(BaseHandler):
     @auth_or_token
     async def post(self, broker_id: int, *, body: BrokerFilterTestBody = None):
@@ -1021,7 +1079,7 @@ class BrokerFilterTestHandler(BaseHandler):
                     f"Broker {broker.name} does not support filter preview."
                 )
             # A windowless preview is rejected upstream as an opaque 400.
-            if broker.broker_class.filter_kind != "query" and (
+            if broker.broker_class.filter_kind not in ("query", "tags") and (
                 params.get("start_jd") is None or params.get("end_jd") is None
             ):
                 return self.error("A filter preview needs both start_jd and end_jd.")
@@ -1217,7 +1275,9 @@ def _validate_version(broker_id, filter_id, fid):
         except Exception as e:
             log(f"Validation of filter {filter_id} version {fid}: {e}")
             verdict = {"fid": fid, "passed": False, "message": f"Error: {e}"}
-        session.refresh(f)
+        f = session.get(Filter, filter_id, populate_existing=True)
+        if f is None:
+            return
         _store_version_validation(f.altdata, verdict)
         _apply_pending_switch(broker, session, f, fid, bool(verdict.get("passed")))
         flag_modified(f, "altdata")
@@ -1521,6 +1581,32 @@ class BrokerFiltersHandler(BaseHandler):
                 return self.error(f"No broker with id {broker_id}")
             if not broker.active:
                 return self.error(f"Broker {broker.name} is not active")
+            # Tag-kind brokers (e.g. Fink): the "filter" is a single broker-side
+            # tag/topic the SP Filter subscribes to, stored on the Filter itself
+            # with no broker-side filter object to create.
+            if broker.broker_class.filter_kind == "tags":
+                f = session.scalars(
+                    Filter.select(self.current_user, mode="update").where(
+                        Filter.id == int(filter_id)
+                    )
+                ).first()
+                if f is None:
+                    return self.error(f"Cannot find a filter with ID: {filter_id}.")
+                query = body.query or {}
+                topic = (query.get("topic") or "").strip()
+                if not topic:
+                    return self.error("A tag filter requires 'topic'.")
+                f.broker_id = broker.id
+                if "autosave" in body.model_fields_set:
+                    f.autosave = bool(body.autosave)
+                ad = dict(f.altdata) if isinstance(f.altdata, dict) else {}
+                ad["fink"] = {"topic": topic}
+                f.altdata = ad
+                flag_modified(f, "altdata")
+                session.commit()
+                return self.success(
+                    data={"id": f.id, "altdata": f.altdata, "autosave": f.autosave}
+                )
             # Query-kind brokers (e.g. Lasair): the "filter" is a saved SQL query
             # (selected/tables/conditions) stored on the skyportal Filter itself,
             # with no broker-side filter object to create.
@@ -1793,7 +1879,7 @@ class BrokerFiltersHandler(BaseHandler):
                         if switching:
                             _requeue_crossmatch(session, f)
                     flag_modified(f, "altdata")
-                for flag in ("autoAnnotate", "autoFollowup"):
+                for flag in ("autoAnnotate", "autoFollowup", "movingObjects"):
                     if flag in body.model_fields_set:
                         f.altdata[flag] = getattr(body, flag)
                         flag_modified(f, "altdata")

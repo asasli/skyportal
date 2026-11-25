@@ -112,11 +112,18 @@ async def create_sharing_service(
     instruments = await process_instrument_ids_async(
         session, session.user_or_token, instrument_ids
     )
-    if not instruments:
+    mpc_only = (
+        sharing_service.enable_sharing_with_mpc
+        and sharing_service.enable_sharing_with_tns is False
+        and not sharing_service.enable_sharing_with_hermes
+        and not sharing_service.enable_sharing_with_trove
+    )
+    if not instruments and not mpc_only:
         raise ValueError("At least one instrument must be specified for sharing")
     streams = await process_stream_ids_async(session, session.user_or_token, stream_ids)
 
-    sharing_service.instruments = instruments
+    if instruments:
+        sharing_service.instruments = instruments
     if streams:
         sharing_service.streams = streams
 
@@ -157,8 +164,8 @@ async def update_sharing_service(
         The ID of the SharingService to update
     instrument_ids : list of int
         List of instrument IDs that can be used for publishing
-    stream_ids : list of int
-        List of stream IDs that can be used for publishing
+    stream_ids : list of int or None
+        List of stream IDs that can be used for publishing, None to keep the current ones
     session : `baselayer.app.models.AsyncSession`
         Async database session
 
@@ -243,9 +250,11 @@ async def update_sharing_service(
     if instruments:
         sharing_service.instruments = instruments
 
-    sharing_service.streams = (
-        await process_stream_ids_async(session, session.user_or_token, stream_ids) or []
-    )
+    if stream_ids is not None:
+        sharing_service.streams = (
+            await process_stream_ids_async(session, session.user_or_token, stream_ids)
+            or []
+        )
 
     validate_tns_fields(sharing_service)
     validate_mpc_fields(sharing_service)
@@ -286,7 +295,7 @@ class SharingServiceHandler(BaseHandler):
             owner_group_ids = list(set(owner_group_ids))
 
         instrument_ids = data.pop("instrument_ids", [])
-        stream_ids = data.pop("stream_ids", [])
+        stream_ids = data.pop("stream_ids", None)
 
         async with self.AsyncSession() as session:
             # Check for duplicates if we're creating a new sharing service
@@ -398,6 +407,7 @@ class SharingServiceHandler(BaseHandler):
                     if group.owner:
                         owner_group_ids.append(group.group_id)
                 sharing_service.owner_group_ids = owner_group_ids
+                sharing_service.mpc_header = sharing_service.mpc_altdata
                 return self.success(data=sharing_service)
             else:
                 result = await session.scalars(stmt)
@@ -408,6 +418,7 @@ class SharingServiceHandler(BaseHandler):
                         if group.owner:
                             owner_group_ids.append(group.group_id)
                     sharing_service.owner_group_ids = owner_group_ids
+                    sharing_service.mpc_header = sharing_service.mpc_altdata
                 return self.success(data=sharing_services)
 
     @permissions(["Manage sharing services"])

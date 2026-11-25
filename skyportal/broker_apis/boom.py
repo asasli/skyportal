@@ -13,7 +13,6 @@ from baselayer.log import make_log
 from ..utils.cache import Cache, cache_folder, dict_to_bytes
 from ..utils.moving_object_track import activity, fwhm_ratio, sky_rate_arcsec_per_hour
 from ..utils.survey import survey_from_object_id
-from ._enrichment import annotate_schema, supplement_schema
 from .interface import BrokerAPI, normalize_module_streams
 
 log = make_log("broker/boom")
@@ -33,6 +32,18 @@ TEST_TIMEOUT = 600  # seconds
 RADIUS_UNIT_MAP = {"deg": "Degrees", "arcmin": "Arcminutes", "arcsec": "Arcseconds"}
 NO_CUTOUT_PROJECTION = {"cutoutScience": 0, "cutoutTemplate": 0, "cutoutDifference": 0}
 FILTER_LINKS_TTL = timedelta(minutes=1)
+HOST_FIELDS = (
+    "objname",
+    "catalog",
+    "ra",
+    "dec",
+    "z",
+    "z_err",
+    "dist_mpc",
+    "sep_arcsec",
+    "sep_kpc",
+    "d_dlr",
+)
 
 cutouts_cache = Cache(
     cache_dir=f"{cache_folder}/broker_cutouts",
@@ -195,7 +206,8 @@ def _programids(kwargs, survey):
     return list(permissions.get(survey) or [])
 
 
-NO_PROGRAMID_SURVEYS = {"LSST", "DECAM", "ARGUS"}
+NO_PROGRAMID_SURVEYS = {"LSST", "DECAM", "ARGUS", "ASKAP"}
+ALL_ZTF_PROGRAMIDS = [1, 2, 3]
 DENY_ALL = {"_id": {"$in": []}}
 
 
@@ -304,8 +316,7 @@ def _passing_alerts(broker, survey, results):
         return {}
     by_candid = {}
     for alert in alerts if isinstance(alerts, list) else []:
-        if survey == "DECAM":
-            alert = _decam_to_standard(alert)
+        alert = _to_standard(survey, alert)
         candid = str(alert.get("_id"))
         alert["_id"] = candid
         if isinstance(alert.get("candidate"), dict):
@@ -363,8 +374,36 @@ def _argus_to_standard(record):
     return record
 
 
-_TO_STANDARD = {"DECAM": _decam_to_standard, "ARGUS": _argus_to_standard}
-_MAG_FIELD = {"DECAM": "candidate.magap", "ARGUS": "candidate.psfMagnitudeDif"}
+def _askap_to_standard(record):
+    """VAST peak flux (mJy) as nJy ``psfFlux`` and its AB mag as ``magpsf``."""
+    if not isinstance(record, dict):
+        return record
+    points = [record.get("candidate") or {}]
+    for key in ("prv_candidates", "fp_hists"):
+        points += record.get(key) or []
+    for p in points:
+        if p.get("frequency") is not None:
+            p.setdefault("band", f"askap-{p['frequency']:.0f}MHz")
+        flux, flux_err = p.get("flux_peak"), p.get("flux_peak_err")
+        if flux is None or flux_err is None:
+            continue
+        p["psfFlux"], p["psfFluxErr"] = flux * 1e6, flux_err * 1e6
+        if flux > 0:
+            p.setdefault("magpsf", _AB_NJY_ZEROPOINT - 2.5 * math.log10(flux * 1e6))
+            p.setdefault("sigmapsf", 1.0857 * flux_err / flux)
+    return record
+
+
+_TO_STANDARD = {
+    "DECAM": _decam_to_standard,
+    "ARGUS": _argus_to_standard,
+    "ASKAP": _askap_to_standard,
+}
+_BRIGHTEST_FIRST = {
+    "DECAM": {"candidate.magap": 1},
+    "ARGUS": {"candidate.psfMagnitudeDif": 1},
+    "ASKAP": {"candidate.flux_peak": -1},
+}
 
 
 def _to_standard(survey, record):
@@ -776,7 +815,7 @@ class BOOMBROKER(BrokerAPI):
 
     parallel_ingestion = True  # shared Kafka consumer group
 
-    surveys = ["ZTF", "LSST", "DECAM", "ARGUS"]
+    surveys = ["ZTF", "LSST", "DECAM", "ARGUS", "ASKAP"]
     filter_kind = "pipeline"
     # cone_search returns BOOM's reference catalogs (Gaia/PS1/AllWISE, ...).
     cross_match_catalogs = True
@@ -820,6 +859,18 @@ class BOOMBROKER(BrokerAPI):
                 "uniqueItems": True,
                 "title": "Surveys",
                 "description": "Empty serves ZTF, LSST and DECam.",
+            },
+            "filter_modules_mongodb_uri": {
+                "type": "string",
+                "title": "Filter modules MongoDB URI",
+                "description": (
+                    "MongoDB holding the filter builder's saved blocks and "
+                    "variables. Empty uses the boom.filter_modules config."
+                ),
+            },
+            "filter_modules_database": {
+                "type": "string",
+                "title": "Filter modules database",
             },
             # Declared so the SASL password is rendered as one and, more to the
             # point, stripped from the broker a reader is served: what is not in
@@ -867,6 +918,7 @@ class BOOMBROKER(BrokerAPI):
 
     ui_json_schema = {
         "password": {"ui:widget": "password"},
+        "filter_modules_mongodb_uri": {"ui:widget": "password"},
         "kafka": {"password": {"ui:widget": "password"}},
     }
 
@@ -891,12 +943,17 @@ class BOOMBROKER(BrokerAPI):
         ra, dec, radius = kwargs.get("ra"), kwargs.get("dec"), kwargs.get("radius")
         scope = {**_scope_filter(kwargs, survey), **_epoch_filter(kwargs)}
         candid = kwargs.get("candid")
+        designation = str(kwargs.get("designation") or "").strip()
 
-        if object_id or candid:
+        if object_id or candid or designation:
             if object_id:
                 match = {"objectId": _object_id_clause(object_id)}
-            else:
+            elif candid:
                 match = {"_id": int(candid) if str(candid).isdigit() else candid}
+            elif survey == "ZTF":
+                match = {"candidate.ssnamenr": designation}
+            else:
+                raise ValueError("Search by designation is only available for ZTF.")
             result = _request(
                 broker,
                 "POST",
@@ -932,7 +989,7 @@ class BOOMBROKER(BrokerAPI):
             if isinstance(result, list):
                 result = [_to_standard(survey, r) for r in result]
             return result
-        raise ValueError("Provide objectId, candid, or ra+dec+radius.")
+        raise ValueError("Provide objectId, candid, designation, or ra+dec+radius.")
 
     @staticmethod
     def get_alert(broker, alert_id, session, **kwargs):
@@ -947,7 +1004,7 @@ class BOOMBROKER(BrokerAPI):
                     **_scope_filter(kwargs, survey),
                 }
             },
-            {"$sort": {_MAG_FIELD.get(survey, "candidate.magpsf"): 1}},
+            {"$sort": _BRIGHTEST_FIRST.get(survey, {"candidate.magpsf": 1})},
             {"$group": {"_id": "$objectId", "data": {"$first": "$$ROOT"}}},
             {"$replaceRoot": {"newRoot": "$data"}},
             {
@@ -979,6 +1036,40 @@ class BOOMBROKER(BrokerAPI):
         )
         record = data[0] if isinstance(data, list) and data else data
         return _scope_history(_to_standard(survey, record), programids)
+
+    @staticmethod
+    def get_hosts(broker, object_ids, session, **kwargs):
+        served = BOOMBROKER.configured_surveys(broker.altdata)
+        ids_by_survey = {}
+        for object_id in object_ids:
+            survey = survey_from_object_id(object_id, served)
+            if survey:
+                ids_by_survey.setdefault(survey, []).append(str(object_id))
+
+        hosts = {}
+        for survey, ids in ids_by_survey.items():
+            values = [v for i in ids for v in ([i, int(i)] if i.isdigit() else [i])]
+            docs = _request(
+                broker,
+                "POST",
+                "queries/find",
+                json={
+                    "catalog_name": f"{survey}_alerts_aux",
+                    "filter": {"_id": {"$in": values}},
+                    "projection": {
+                        f"host_galaxy.best_host.{field}": 1 for field in HOST_FIELDS
+                    },
+                    "max_time_ms": 10000,
+                },
+                timeout=15,
+            )
+            for doc in docs or []:
+                best = (doc.get("host_galaxy") or {}).get("best_host")
+                if best:
+                    hosts[str(doc["_id"])] = {
+                        field: best.get(field) for field in HOST_FIELDS
+                    }
+        return hosts
 
     @staticmethod
     def get_cutouts(broker, alert_id, session, **kwargs):
@@ -1197,6 +1288,46 @@ class BOOMBROKER(BrokerAPI):
         return results
 
     @staticmethod
+    def similar_objects(broker, object_id, session, top_k=10, **kwargs):
+        if survey_from_object_id(object_id, ["ZTF"]) != "ZTF":
+            return []
+        programids = _programids(kwargs, "ZTF")
+        if programids is None:
+            programids = ALL_ZTF_PROGRAMIDS
+        programids = [p for p in programids if p in ALL_ZTF_PROGRAMIDS]
+        if not programids:
+            return []
+        try:
+            neighbors = _request(
+                broker,
+                "POST",
+                "similarity/objects",
+                json={
+                    "object_id": object_id,
+                    "top_k": int(top_k),
+                    "programids": programids,
+                },
+            )
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                return []
+            raise
+        if isinstance(neighbors, dict):
+            neighbors = neighbors.get("neighbors")
+        return [
+            {
+                "object_id": n["object_id"],
+                "score": n["score"],
+                "jd": n.get("jd"),
+                "model_label": (n.get("applecider_fusion") or {}).get("decision_label"),
+                "model_probability": (n.get("applecider_fusion") or {}).get(
+                    "decision_probability"
+                ),
+            }
+            for n in neighbors or []
+        ]
+
+    @staticmethod
     def gaia_cone_search(broker, ra, dec, radius_degrees, columns):
         data = _request(
             broker,
@@ -1401,6 +1532,7 @@ class BOOMBROKER(BrokerAPI):
                                 fetch_history=lambda s, d: asyncio.to_thread(
                                     _fetch_sso_history, broker, s, d
                                 ),
+                                cutouts=cutouts,
                             )
                         elif sidereal_ids:
                             await save_object_as_candidate(
@@ -1452,11 +1584,7 @@ class BOOMBROKER(BrokerAPI):
         elements = kwargs.get("elements", "schema")
         if elements == "schema":
             survey = _survey(kwargs)
-            # BOOM's schema describes the packet; a pipeline runs against
-            # the document BOOM enriched. Fill in what it writes and does
-            # not yet declare.
-            schema = _request(broker, "GET", f"filters/schemas/{survey}")
-            return {"schema": annotate_schema(supplement_schema(schema))}
+            return {"schema": _request(broker, "GET", f"filters/schemas/{survey}")}
         name = kwargs.get("name")
         db = _modules_db(broker)
         if db is None:
@@ -1577,9 +1705,8 @@ class BOOMBROKER(BrokerAPI):
         survey = kwargs.get("survey")
         if survey is None and kwargs.get("selectedCollection"):
             survey = str(kwargs["selectedCollection"]).split("_")[0]
-        survey = survey or _survey(kwargs)
 
-        programids = _programids(kwargs, survey)
+        stream_altdata = None
         if kwargs.get("filter_id") is not None:
             import sqlalchemy as sa
             from sqlalchemy.orm import joinedload
@@ -1592,12 +1719,19 @@ class BOOMBROKER(BrokerAPI):
                 .where(Filter.id == int(kwargs["filter_id"]))
             )
             if f is not None and f.stream and isinstance(f.stream.altdata, dict):
-                selector = f.stream.altdata.get("selector") or []
-                programids = (
-                    list(selector)
-                    if programids is None
-                    else sorted(set(selector) & set(programids))
-                )
+                stream_altdata = f.stream.altdata
+        if survey is None and stream_altdata and stream_altdata.get("collection"):
+            survey = str(stream_altdata["collection"]).split("_")[0].upper()
+        survey = survey or _survey(kwargs)
+
+        programids = _programids(kwargs, survey)
+        if stream_altdata is not None:
+            selector = stream_altdata.get("selector") or []
+            programids = (
+                list(selector)
+                if programids is None
+                else sorted(set(selector) & set(programids))
+            )
 
         if programids is None:
             # BOOM rejects an empty permissions map, so an unrestricted user

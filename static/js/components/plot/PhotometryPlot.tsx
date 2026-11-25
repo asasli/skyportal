@@ -1,11 +1,12 @@
 import { useTheme } from "@mui/material/styles";
-import { useGetProfileQuery } from "../../ducks/profile";
+import { useGetProfileQuery, useIsReadOnly } from "../../ducks/profile";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import Plotly from "plotly.js-basic-dist";
 import createPlotlyComponent from "react-plotly.js/factory";
 
 import { makeStyles } from "tss-react/mui";
+import Box from "@mui/material/Box";
 import Slider from "@mui/material/Slider";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
@@ -58,6 +59,7 @@ import {
 } from "../../utils";
 import { useGetConfigQuery } from "../../ducks/config";
 import { useGetAnalysesQuery } from "../../ducks/source";
+import AnalysisForm from "../analysis/AnalysisForm";
 import PhotometryCutoutStrip, { CutoutPin } from "./PhotometryCutoutStrip";
 import {
   buildModelLightcurveTraces,
@@ -83,6 +85,7 @@ import { SsoPoint } from "./ssoTransforms";
 import ScatterPlotIcon from "@mui/icons-material/ScatterPlot";
 import CornerPlot from "./CornerPlot";
 import RemovableChip from "../RemovableChip";
+import SearchableSelectWidget from "../SearchableSelectWidget";
 
 const BAND_GROUP_ORDER = ["u", "g", "r", "i", "z", "y", "other"];
 
@@ -101,6 +104,7 @@ const bandGroup = (filter: string): string =>
 // destructure is a new array each render, which would invalidate the
 // effectiveModelFits memo every render → setState-in-effect → render loop.
 const EMPTY_MODEL_FITS: ModelFit[] = [];
+const FIT_ANALYSIS_TYPES = ["lightcurve_fitting"];
 const MODEL_DASHES = ["solid", "dash", "dot", "dashdot"];
 const MAX_FIT_MAG_BEYOND_DATA = 2;
 
@@ -356,6 +360,7 @@ const PeriodAnnotationDialog = ({
             schema={schema}
             uiSchema={{
               groupIDs: {
+                "ui:widget": SearchableSelectWidget,
                 "ui:enumNames": groups?.map((group: any) => group.name),
               },
             }}
@@ -410,8 +415,10 @@ const PhotometryPlot = ({
   const { classes } = useStyles();
 
   const { data: profile } = useGetProfileQuery();
+  const isReadOnly = useIsReadOnly();
   const { data: config } = useGetConfigQuery() as { data: any };
   const dispatch = useAppDispatch();
+  const [runFitOpen, setRunFitOpen] = useState(false);
 
   // Analysis-service model fits to overlay (self-fetched unless passed in).
   const { data: objAnalyses } = useGetAnalysesQuery({
@@ -1045,17 +1052,22 @@ const PhotometryPlot = ({
     stats.mag.range = [stats.mag.max * 1.02, stats.mag.min * 0.98];
     stats.mjd.range = [
       t0 && displayXAxisSinceT0 ? t0 - 1 : stats.mjd.min - 1,
-      stats.mjd.max + 1,
+      // don't pad past the present unless a point is already past it
+      stats.mjd.max < now
+        ? Math.min(stats.mjd.max + 1, now)
+        : stats.mjd.max + 1,
     ];
     if (stats.days_ago) {
-      stats.days_ago.range = [stats.days_ago.max + 1, stats.days_ago.min - 1];
+      stats.days_ago.range = stats.mjd.range.map((mjd: number) => now - mjd);
     } else if (displayXAxisInlog) {
       stats.sec_since_t0.range = [
         -daysToSec(1),
         stats.sec_since_t0.max + daysToSec(1),
       ];
     } else {
-      stats.sec_since_t0.range = [-1, stats.sec_since_t0.max + 1];
+      stats.sec_since_t0.range = stats.mjd.range.map(
+        (mjd: number) => mjd - t0!,
+      );
     }
     stats.flux.range = [stats.flux.min - 1, stats.flux.max + 1];
 
@@ -1632,6 +1644,16 @@ const PhotometryPlot = ({
           ...BASE_LAYOUT,
           ...axisTheme,
         };
+        // Otherwise Plotly syncs an overlaid axis to the MJD ticks.
+        const dayTicks = {
+          tickmode: "auto",
+          tickformat: ",.0f",
+          tickformatstops: [
+            { dtickrange: [null, 0.1], value: ",.2f" },
+            { dtickrange: [0.1, 1], value: ",.1f" },
+            { dtickrange: [1, null], value: ",.0f" },
+          ],
+        };
         newLayouts.xaxis2 = photStats_value.days_ago
           ? {
               title: {
@@ -1642,13 +1664,7 @@ const PhotometryPlot = ({
               side: "bottom",
               showgrid: false,
               zeroline: false,
-              // Ticks land on fractional days, so let the spacing Plotly picked set the precision.
-              tickformat: ",.0f",
-              tickformatstops: [
-                { dtickrange: [null, 0.1], value: ",.2f" },
-                { dtickrange: [0.1, 1], value: ",.1f" },
-                { dtickrange: [1, null], value: ",.0f" },
-              ],
+              ...dayTicks,
               ...BASE_LAYOUT,
               ...axisTheme,
             }
@@ -1661,7 +1677,7 @@ const PhotometryPlot = ({
               side: "bottom",
               showgrid: false,
               zeroline: false,
-              tickformat: ",.0f",
+              ...dayTicks,
               ...BASE_LAYOUT,
               ...axisTheme,
             };
@@ -2541,7 +2557,7 @@ const PhotometryPlot = ({
         }
         onClear={() => setCutoutPins([])}
       />
-      {effectiveModelFits.length > 0 && (
+      {(effectiveModelFits.length > 0 || !isReadOnly) && (
         <div
           style={{
             display: "flex",
@@ -2551,9 +2567,11 @@ const PhotometryPlot = ({
             padding: "0.3rem 0.5rem",
           }}
         >
-          <Typography variant="caption" style={{ marginRight: 4 }}>
-            Model fits:
-          </Typography>
+          {effectiveModelFits.length > 0 && (
+            <Typography variant="caption" style={{ marginRight: 4 }}>
+              Model fits:
+            </Typography>
+          )}
           {modelGroups.map((g) => {
             const shown = shownModels.has(g.key);
             const selected = selectedFitFor(g);
@@ -2630,8 +2648,35 @@ const PhotometryPlot = ({
               </span>
             );
           })}
+          {!isReadOnly && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setRunFitOpen(true)}
+              data-testid="photometry-run-fit"
+            >
+              Run fit
+            </Button>
+          )}
         </div>
       )}
+      <Dialog
+        open={runFitOpen}
+        onClose={() => setRunFitOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>Run fit</DialogTitle>
+        <DialogContent>
+          <div style={{ paddingTop: 8 }}>
+            <AnalysisForm
+              obj_id={obj_id}
+              analysisTypes={FIT_ANALYSIS_TYPES}
+              onStarted={() => setRunFitOpen(false)}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
       <Menu
         open={!!runMenu}
         anchorEl={runMenu?.anchor}
@@ -2742,23 +2787,25 @@ const PhotometryPlot = ({
                 </div>
               </Tooltip>
             </div>
-            <div
-              style={{ display: "flex", gap: "0.25rem", alignItems: "center" }}
-            >
-              <Typography id="photometry-negative-flux" noWrap>
-                Show negative flux
-              </Typography>
-              <Tooltip title="Flux view only. Plots the measured flux with its uncertainty, so a source fainter than the reference keeps its negative value instead of becoming an upper limit. A log flux axis cannot show it.">
-                <div className={classes.switchContainer}>
-                  <Switch
-                    checked={showNegativeFlux}
-                    onChange={() => setShowNegativeFlux(!showNegativeFlux)}
-                    slotProps={{ input: { "aria-label": "controlled" } }}
-                    size="small"
-                  />
-                </div>
-              </Tooltip>
-            </div>
+            {tabToPlotType(tabIndex) === "flux" && (
+              <Box
+                sx={{ display: "flex", gap: "0.25rem", alignItems: "center" }}
+              >
+                <Typography id="photometry-negative-flux" noWrap>
+                  Show negative flux
+                </Typography>
+                <Tooltip title="Plots the measured flux with its uncertainty, so a source fainter than the reference keeps its negative value instead of becoming an upper limit. A log flux axis cannot show it.">
+                  <div className={classes.switchContainer}>
+                    <Switch
+                      checked={showNegativeFlux}
+                      onChange={() => setShowNegativeFlux(!showNegativeFlux)}
+                      slotProps={{ input: { "aria-label": "controlled" } }}
+                      size="small"
+                    />
+                  </div>
+                </Tooltip>
+              </Box>
+            )}
           </div>
           <div className={classes.gridItem}>
             {t0 && (

@@ -13,160 +13,6 @@ export interface FeatureAnnouncement {
 
 export const FEATURE_ANNOUNCEMENTS: FeatureAnnouncement[] = [
   {
-    id: "source-chat",
-    path: /^\/source\/[^/]+$/,
-    announcedAt: "2026-08-10",
-    steps: [
-      {
-        target:
-          '[data-testid="source-chat"], [data-testid="source-chat-button"]',
-        title: "Comments are now a chat",
-        content:
-          "Comments got a refreshed look and now read like any messaging app, " +
-          "newest at the bottom. Split side discussions into named " +
-          "conversations with +, or detach the panel into a floating window.",
-        placement: "top",
-      },
-    ],
-  },
-  {
-    id: "alerts-sidebar-shortcut",
-    path: /./,
-    announcedAt: "2026-08-15",
-    steps: [
-      {
-        // First: the Alerts step below is skipped without a default broker.
-        target: '[data-testid="tour-nav-brokers"]',
-        title: "New brokers page",
-        content:
-          "This takes you to the list of brokers set up for this instance. " +
-          "Open whichever one you want from there to search its alerts.",
-      },
-      {
-        target: '[data-testid="tour-nav-alerts"]',
-        title: "New alerts shortcut",
-        content:
-          "This shortcut takes you straight to the alert search of this " +
-          "instance's default broker.",
-      },
-    ],
-  },
-  {
-    id: "gcn-event-comments",
-    path: /^\/gcn_events\/[^/]+$/,
-    announcedAt: "2026-08-16",
-    steps: [
-      {
-        target: '[data-testid="source-chat-button"]',
-        title: "Comments on GCN events",
-        content:
-          "Event comments have moved to the new detached chat panel. Click this button to open it.",
-        placement: "left",
-      },
-    ],
-  },
-  {
-    id: "source-interests",
-    path: /^\/source\/[^/]+$/,
-    announcedAt: "2026-08-17",
-    steps: [
-      {
-        target: '[data-testid="interested-button"]',
-        title: "New interested button",
-        content:
-          "Register your interest in a source, with a note and a link to your " +
-          "work. The button shows who else is interested, and opens a " +
-          "conversation with them.",
-      },
-      {
-        target: '[data-testid="discuss-interests-button"]',
-        before: async () => {
-          document
-            .querySelector<HTMLElement>('[data-testid="interested-button"]')
-            ?.click();
-        },
-        title: "Interested conversation",
-        content:
-          "Registering an interest opens a conversation dedicated to it in " +
-          "the comments. Open it from here to plan the work together.",
-      },
-    ],
-  },
-  {
-    id: "brokers-page-alert-search",
-    path: /^\/brokers\/?$/,
-    announcedAt: "2026-08-15",
-    steps: [
-      {
-        target: '[data-testid="tour-brokers-list"]',
-        title: "New alert search",
-        content:
-          "Every broker set up for this instance is listed here. Open any of " +
-          "them to search its alerts.",
-      },
-    ],
-  },
-  {
-    id: "public-profiles",
-    path: /^\/$/,
-    announcedAt: "2026-08-26",
-    steps: [
-      {
-        target: '[data-testid="avatar"]',
-        title: "New public profiles",
-        content:
-          "Every user now has a profile that others can open from their " +
-          "avatar or username anywhere in the app. Set yours up from here.",
-      },
-    ],
-  },
-  {
-    id: "public-profile-settings",
-    path: /^\/profile\/?$/,
-    announcedAt: "2026-08-26",
-    steps: [
-      {
-        // The eyes are per-field, so match whichever one comes first.
-        target: '[data-testid^="public-toggle-"]',
-        title: "Choose what you share",
-        content:
-          "The eye next to a field tells you whether it is on your public " +
-          "profile. Click it to show or hide that field.",
-      },
-      {
-        target: '[data-testid="profile-public-view"]',
-        title: "See your public profile",
-        content:
-          "This opens the page others see when they click your name, with " +
-          "only the fields you chose to share.",
-      },
-    ],
-  },
-  {
-    id: "source-list-cleanup",
-    path: /^\/(sources|group_sources\/[^/]+|favorites)\/?$/,
-    announcedAt: "2026-09-20",
-    steps: [
-      {
-        target: '[data-testid^="source_table_"]',
-        title: "Source tables cleaned up",
-        content:
-          "Every source table has been cleaned up, and search is fixed: it " +
-          "no longer loses focus after each letter, and it ignores case, so " +
-          "ztf finds ZTF.",
-        placement: "center",
-      },
-      {
-        target: '[data-testid="add-column-button"]',
-        title: "Annotation and altdata columns",
-        content:
-          "The column picker moved from above the table to this button. Open " +
-          "it to search any annotation or altdata field and add it as a column.",
-        placement: "bottom",
-      },
-    ],
-  },
-  {
     id: "deployments-page",
     path: /./,
     announcedAt: "2026-09-30",
@@ -205,24 +51,7 @@ export const FEATURE_ANNOUNCEMENTS: FeatureAnnouncement[] = [
         title: "Deployments",
         content:
           "See which version of the app is running and what changed with each " +
-          "deployment. From its Feedback tab, report any issue or bug, or ask " +
-          "for new additions.",
-      },
-    ],
-  },
-  {
-    id: "sharing-service-coauthor-order",
-    path: /^\/sharing_services\/?$/,
-    announcedAt: "2026-09-15",
-    steps: [
-      {
-        target: '[data-testid="tour-sharing-service-coauthors"]',
-        acl: "Manage sharing services",
-        title: "Coauthors are now ordered",
-        content:
-          "Coauthors are listed in the order they are published in, right " +
-          "after the publisher and before the acknowledgments. Drag a name to " +
-          "change that order.",
+          "deployment.",
       },
     ],
   },
@@ -259,6 +88,40 @@ export const FEATURE_ANNOUNCEMENTS: FeatureAnnouncement[] = [
           "Set up as many quick save buttons as you need in your profile, " +
           "under Sources, each saving to its own groups. They show up next " +
           "to this button, which saves to any other group.",
+      },
+    ],
+  },
+  {
+    id: "assignment-purpose",
+    path: /^\/source\/[^/]+$/,
+    announcedAt: "2026-11-13",
+    steps: [
+      {
+        target: '[data-testid="assignmentPurposeSelect"]',
+        before: async () => {
+          document
+            .querySelector('[data-testid="assignmentPurposeSelect"]')
+            ?.scrollIntoView({ block: "center" });
+        },
+        title: "Assignment purpose",
+        content:
+          "Tag an observing run assignment as classification or follow-up. " +
+          "The run page shows it in its own column and can filter on it.",
+      },
+    ],
+  },
+  {
+    id: "feedback-header-button",
+    path: /./,
+    announcedAt: "2026-11-18",
+    steps: [
+      {
+        target: '[data-testid="feedbackButton"]',
+        title: "Feedback moved here",
+        content:
+          "Report a bug or ask for a new feature from this button, and " +
+          "follow the replies on its page.",
+        placement: "bottom",
       },
     ],
   },

@@ -4,16 +4,15 @@ import useTabParam from "../../hooks/useTabParam";
 
 import AddIcon from "@mui/icons-material/Add";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
-import MenuItem from "@mui/material/MenuItem";
 import Pagination from "@mui/material/Pagination";
 import Paper from "@mui/material/Paper";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import Tooltip from "@mui/material/Tooltip";
-import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import {
@@ -22,7 +21,14 @@ import {
 } from "../../ducks/brokers";
 import BrokerAlertCard, { AlertOption, toAlertOption } from "./BrokerAlertCard";
 import BrokerAlertFilters from "./BrokerAlertFilters";
+import BrokerAlertSearch, {
+  AlertSearch,
+  DEFAULT_SEARCH,
+  SearchMode,
+  searchSurvey,
+} from "./BrokerAlertSearch";
 import BrokerCredentialsForm from "./BrokerCredentialsForm";
+import BrokerSchema from "./BrokerSchema";
 import FilterCatalog from "./FilterCatalog";
 import { AlertFilter, fieldsOf, flatten, matchesFilters } from "./alertFields";
 import NewFilterDialog from "../filter/NewFilterDialog";
@@ -30,32 +36,6 @@ import Spinner from "../Spinner";
 import { dec_to_deg, ra_to_deg } from "../../units";
 
 const PAGE_SIZE = 12;
-const ARGUS_OBJECT_ID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-// Mirrors the backend's survey_from_object_id.
-const pickSurvey = (
-  override: string | null,
-  objectId: string,
-  surveys: string[],
-) => {
-  const id = objectId.trim();
-  const guessed = /^ZTF\d{2}[a-z]{7}$/.test(id)
-    ? "ZTF"
-    : /^[ACT]20\d{13}[pm]\d{6}$/.test(id)
-      ? "DECAM"
-      : /^\d+$/.test(id)
-        ? "LSST"
-        : ARGUS_OBJECT_ID.test(id)
-          ? "ARGUS"
-          : undefined;
-  return (
-    override ||
-    (guessed && surveys.includes(guessed) ? guessed : undefined) ||
-    surveys[0] ||
-    "ZTF"
-  );
-};
 
 const TooltipTab = ({ tooltip, ...tabProps }: any) => (
   <Tooltip title={tooltip} placement="top">
@@ -70,14 +50,16 @@ const Broker = () => {
   const brokerId = Number(brokerIdParam);
   const { data: brokers, isLoading: brokersLoading } = useGetBrokersQuery();
 
-  const [objectId, setObjectId] = useState("");
-  const [ra, setRa] = useState("");
-  const [dec, setDec] = useState("");
-  const [radius, setRadius] = useState("");
-  const [survey, setSurvey] = useState("");
+  const [form, setForm] = useState<AlertSearch>(DEFAULT_SEARCH);
+  const [queriedDesignation, setQueriedDesignation] = useState("");
   const [queriedSurvey, setQueriedSurvey] = useState("");
   const [page, setPage] = useState(1);
-  const [tab, setTab] = useTabParam(["alerts", "filters", "credentials"]);
+  const [tab, setTab] = useTabParam([
+    "alerts",
+    "filters",
+    "schema",
+    "credentials",
+  ]);
   const [newFilterOpen, setNewFilterOpen] = useState(false);
   const [filters, setFilters] = useState<AlertFilter[]>([]);
 
@@ -86,7 +68,8 @@ const Broker = () => {
 
   const broker = brokers?.find((b) => b.id === brokerId);
   const surveys = broker?.surveys ?? [];
-  const searchSurvey = pickSurvey(survey, objectId, surveys);
+  const designationSearch =
+    broker?.broker_classname === "BOOMBROKER" && surveys.includes("ZTF");
   const hasFilters = Boolean(broker && broker.filter_kind !== "none");
   const tabs = [
     {
@@ -101,31 +84,37 @@ const Broker = () => {
         ? ""
         : `${broker?.name} does not support filters.`,
     },
+    {
+      label: "Schema",
+      disabledReason: broker?.capabilities?.["filter_modules"]
+        ? ""
+        : `${broker?.name} does not publish an alert schema.`,
+    },
     { label: "Credentials", disabledReason: "" },
   ];
   const activeTab = tabs[tab]?.disabledReason
     ? tabs.findIndex((t) => !t.disabledReason)
     : tab;
 
-  const search = (params: {
-    objectId: string;
-    survey: string;
-    ra?: string;
-    dec?: string;
-    radius?: string;
-  }) => {
+  const search = (query: AlertSearch) => {
+    const survey = searchSurvey(query, surveys);
+    const designation =
+      query.mode === "designation" ? query.designation.trim() : "";
+    const cone = query.mode === "position";
     setPage(1);
     setFilters([]);
-    setQueriedSurvey(params.survey);
+    setQueriedSurvey(survey);
+    setQueriedDesignation(designation);
     triggerAlerts({
       brokerId,
       params: {
-        objectId: params.objectId || undefined,
-        ra: params.ra ? ra_to_deg(params.ra) : undefined,
-        dec: params.dec ? dec_to_deg(params.dec) : undefined,
-        radius: params.radius || undefined,
-        radius_units: params.radius ? "arcsec" : undefined,
-        survey: params.survey,
+        objectId: query.mode === "object" ? query.objectId.trim() : undefined,
+        designation: designation || undefined,
+        ra: cone ? ra_to_deg(query.ra.trim()) : undefined,
+        dec: cone ? dec_to_deg(query.dec.trim()) : undefined,
+        radius: cone ? query.radius.trim() : undefined,
+        radius_units: cone ? "arcsec" : undefined,
+        survey,
       },
     });
   };
@@ -135,44 +124,28 @@ const Broker = () => {
   useEffect(() => {
     if (autoSearched.current || !broker) return;
     autoSearched.current = true;
-    const params = {
-      objectId: searchParams.get("objectId") || "",
-      ra: searchParams.get("ra") || "",
-      dec: searchParams.get("dec") || "",
-      radius: searchParams.get("radius") || "",
-    };
-    if (!params.objectId && !params.ra) return;
+    const objectId = searchParams.get("objectId") || "";
+    const designation = searchParams.get("designation") || "";
+    const ra = searchParams.get("ra") || "";
+    let mode: SearchMode | undefined;
+    if (objectId) mode = "object";
+    else if (designation) mode = "designation";
+    else if (ra) mode = "position";
+    if (!mode) return;
 
-    const uSurvey = pickSurvey(
-      searchParams.get("survey"),
-      params.objectId,
-      surveys,
-    );
-    setObjectId(params.objectId);
-    setRa(params.ra);
-    setDec(params.dec);
-    setRadius(params.radius);
-    setSurvey(uSurvey);
-    search({ ...params, survey: uSurvey });
+    const query: AlertSearch = {
+      mode,
+      objectId,
+      designation,
+      ra,
+      dec: searchParams.get("dec") || "",
+      radius: searchParams.get("radius") || DEFAULT_SEARCH.radius,
+      survey: searchParams.get("survey") || "",
+    };
+    setForm(query);
+    search(query);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [broker]);
-
-  const coneDisabled = objectId.trim() !== "";
-  const coneFields = [
-    {
-      label: "RA (deg)",
-      placeholder: "deg or HH:MM:SS",
-      value: ra,
-      set: setRa,
-    },
-    {
-      label: "Dec (deg)",
-      placeholder: "deg or ±DD:MM:SS",
-      value: dec,
-      set: setDec,
-    },
-    { label: "Radius (arcsec)", value: radius, set: setRadius },
-  ];
 
   const rows: unknown[] | null = Array.isArray(data)
     ? data
@@ -181,21 +154,26 @@ const Broker = () => {
       : null;
   const flatRows = useMemo(() => (rows ?? []).map((r) => flatten(r)), [rows]);
   const fields = useMemo(() => fieldsOf(flatRows), [flatRows]);
-  const kept = rows?.filter((_r, i) =>
-    matchesFilters(flatRows[i] ?? {}, filters),
+  const kept = useMemo(
+    () => rows?.filter((_r, i) => matchesFilters(flatRows[i] ?? {}, filters)),
+    [rows, flatRows, filters],
   );
 
-  const byObject = new Map<string, AlertOption[]>();
-  (kept ?? []).forEach((a: any) => {
-    const oid =
-      a?.objectId ??
-      a?.diaObjectId ??
-      a?.object_id ??
-      a?.object ??
-      a?.candidate?.objectId;
-    if (!oid) return;
-    byObject.set(oid, [...(byObject.get(oid) ?? []), toAlertOption(a)]);
-  });
+  const byObject = useMemo(() => {
+    const groups = new Map<string, AlertOption[]>();
+    (kept ?? []).forEach((a: any) => {
+      const oid =
+        queriedDesignation ||
+        (a?.objectId ??
+          a?.diaObjectId ??
+          a?.object_id ??
+          a?.object ??
+          a?.candidate?.objectId);
+      if (!oid) return;
+      groups.set(oid, [...(groups.get(oid) ?? []), toAlertOption(a)]);
+    });
+    return groups;
+  }, [kept, queriedDesignation]);
   const pageCount = Math.ceil(byObject.size / PAGE_SIZE);
   const current = Math.min(page, pageCount);
   const start = (current - 1) * PAGE_SIZE;
@@ -259,86 +237,27 @@ const Broker = () => {
           </Tabs>
 
           {activeTab === 0 && (
-            <Box
-              sx={{
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: 2,
-                mb: 2,
-              }}
-            >
-              <TextField
-                size="small"
-                label="Object ID"
-                value={objectId}
-                onChange={(e) => setObjectId(e.target.value)}
-              />
-              {surveys.length > 1 && (
-                <Tooltip
-                  placement="top"
-                  title="Selected automatically from the object ID format, override it if needed"
-                >
-                  <TextField
-                    select
-                    size="small"
-                    label="Survey"
-                    value={searchSurvey}
-                    onChange={(e) => setSurvey(e.target.value)}
-                    sx={{ minWidth: 120 }}
-                  >
-                    {surveys.map((s) => (
-                      <MenuItem key={s} value={s}>
-                        {s}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                </Tooltip>
-              )}
-              {coneFields.map(({ label, placeholder, value, set }) => (
-                <Tooltip
-                  key={label}
-                  title={
-                    coneDisabled &&
-                    "Disabled while an Object ID is set: the search is done by object, not by position."
-                  }
-                >
-                  <span>
-                    <TextField
-                      size="small"
-                      label={label}
-                      placeholder={placeholder}
-                      value={value}
-                      disabled={coneDisabled}
-                      onChange={(e) => set(e.target.value)}
-                    />
-                  </span>
-                </Tooltip>
-              ))}
-              <Button
-                variant="contained"
-                onClick={() =>
-                  search({
-                    objectId,
-                    survey: searchSurvey,
-                    ...(!coneDisabled && { ra, dec, radius }),
-                  })
-                }
-                disabled={isFetching}
-              >
-                {isFetching ? "Searching…" : "Search"}
-              </Button>
-            </Box>
+            <BrokerAlertSearch
+              value={form}
+              onChange={setForm}
+              onSearch={() => search(form)}
+              surveys={surveys}
+              designationSearch={designationSearch}
+              searching={isFetching}
+            />
           )}
 
           {activeTab === 1 && <FilterCatalog brokerId={brokerId} />}
+          {activeTab === 2 && (
+            <BrokerSchema brokerId={brokerId} surveys={surveys} />
+          )}
 
           <NewFilterDialog
             open={newFilterOpen}
             onClose={() => setNewFilterOpen(false)}
             brokerId={brokerId}
           />
-          {activeTab === 2 && (
+          {activeTab === 3 && (
             <BrokerCredentialsForm
               brokerId={brokerId}
               brokerClassname={broker.broker_classname}
@@ -347,10 +266,10 @@ const Broker = () => {
 
           {activeTab === 0 && (
             <>
-              {error && (
-                <Typography color="error" gutterBottom>
+              {error && !isFetching && (
+                <Alert severity="error" sx={{ mb: 2 }}>
                   {(error as any)?.data?.message || "Failed to query broker."}
-                </Typography>
+                </Alert>
               )}
 
               {rows && rows.length > 0 && (
@@ -362,6 +281,7 @@ const Broker = () => {
               )}
 
               {data !== undefined &&
+                !error &&
                 (byObject.size > 0 ? (
                   <>
                     <Typography variant="subtitle2" gutterBottom>
@@ -385,9 +305,10 @@ const Broker = () => {
                           brokerId={brokerId}
                           brokerClassname={broker.broker_classname}
                           objectId={oid}
-                          survey={queriedSurvey || searchSurvey}
+                          survey={queriedSurvey}
                           alerts={alerts}
                           expanded={pageGroups.length === 1}
+                          movingObject={Boolean(queriedDesignation)}
                         />
                       ))}
                     </Box>
@@ -404,6 +325,13 @@ const Broker = () => {
                       />
                     )}
                   </>
+                ) : kept?.length === 0 ? (
+                  <Typography
+                    color="text.secondary"
+                    sx={{ py: 4, textAlign: "center" }}
+                  >
+                    No alerts found.
+                  </Typography>
                 ) : (
                   <Paper
                     variant="outlined"

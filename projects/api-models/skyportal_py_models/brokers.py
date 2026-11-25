@@ -19,6 +19,7 @@ class BrokerCapabilitiesResponse(BaseModel):
 
     query_alerts: bool | None = None
     get_alert: bool | None = None
+    get_hosts: bool | None = None
     get_cutouts: bool | None = None
     cone_search: bool | None = None
     gaia_cone_search: bool | None = None
@@ -34,6 +35,7 @@ class BrokerCapabilitiesResponse(BaseModel):
     test_connection: bool | None = None
     save_as_source: bool | None = None
     get_photometry: bool | None = None
+    similar_objects: bool | None = None
     # Data-semantics flags rather than methods: whether ``cone_search``
     # returns reference catalogs, and the dialect ``test_filter`` expects its
     # pipeline in (``None`` when the provider takes no pipeline at all).
@@ -487,6 +489,11 @@ class BrokerFiltersPatchBody(BaseModel):
     autoFollowup: bool | None = Field(
         default=None, description="Whether to auto-trigger followup on filter passage."
     )
+    movingObjects: bool | None = Field(
+        default=None,
+        description="Whether the scanning page opens on the moving objects view "
+        "for this filter.",
+    )
     autoSaveIgnoreGroupIds: list[int] | None = Field(
         default=None,
         description="Groups whose members are not auto-saved (e.g. junk).",
@@ -563,6 +570,10 @@ class BrokerAlertsGetQuery(BaseModel):
 
     objectId: str | None = Field(default=None, description="Survey object id.")
     candid: str | None = Field(default=None, description="Id of a single alert.")
+    designation: str | None = Field(
+        default=None,
+        description="Solar system object designation, as the survey writes it (e.g. 6993, 10P).",
+    )
     ra: float | None = Field(default=None, description="RA in degrees.")
     dec: float | None = Field(default=None, description="Declination in degrees.")
     radius: float | None = Field(default=None, description="Search radius.")
@@ -623,6 +634,14 @@ class BrokerPhotometryGetQuery(BaseModel):
         default=False,
         description="Include Galactic extinction and extinction-corrected values.",
     )
+
+
+class BrokerHostsGetQuery(BaseModel):
+    """Query parameters for reading the host galaxies of objects."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    objectIds: str = Field(description="Comma-separated object ids.")
 
 
 class BrokerFilterModulesGetQuery(BaseModel):

@@ -4,8 +4,10 @@ import urllib
 import arrow
 import astropy.units as u
 import requests
+import sqlalchemy as sa
 from astropy.coordinates import Angle
 from astropy.time import Time
+from pydantic import BaseModel, ConfigDict, Field
 from skyportal_py_models.objs import ObjMPCPostBody
 from sqlalchemy.orm import scoped_session, sessionmaker
 from tornado.ioloop import IOLoop
@@ -16,10 +18,15 @@ from baselayer.app.flow import Flow
 from baselayer.log import make_log
 
 from ...models import (
+    Instrument,
     Obj,
+    Photometry,
+    Telescope,
     User,
     new_session,
 )
+from ...models.photometry import PHOT_DETECTION_THRESHOLD
+from ...utils.jpl_sbident import GEOCENTRIC_OBSCODE
 from ..base import BaseHandler
 
 env, cfg = load_env()
@@ -29,7 +36,83 @@ MPC_ENDPOINT = cfg["app.mpc_endpoint"]
 mpcheck_url = urllib.parse.urljoin(MPC_ENDPOINT, "cgi-bin/mpcheck.cgi")
 
 
+async def detection_obscode(session, obj_id, date):
+    nearest = (
+        Photometry.select(session.user_or_token)
+        .where(
+            Photometry.obj_id == obj_id,
+            Photometry.snr > PHOT_DETECTION_THRESHOLD,
+        )
+        .order_by(sa.func.abs(Photometry.mjd - date.mjd))
+        .limit(1)
+        .subquery()
+    )
+    obscode = await session.scalar(
+        sa.select(Telescope.mpc_obscode)
+        .join(Instrument, Instrument.telescope_id == Telescope.id)
+        .join(nearest, nearest.c.instrument_id == Instrument.id)
+    )
+    return obscode or GEOCENTRIC_OBSCODE
+
+
+def parse_date(date):
+    if date is None:
+        return Time.now()
+    return Time(arrow.get(date).datetime, format="datetime")
+
+
+class ObjMPCGetQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date: str | None = Field(
+        default=None,
+        description="UTC date of the MPC query. Defaults to now.",
+    )
+
+
 class ObjMPCHandler(BaseHandler):
+    @auth_or_token
+    async def get(self, obj_id: str, *, query: ObjMPCGetQuery = None):
+        """
+        ---
+        summary: Get an object's default MPC observatory code
+        description: |
+          Observatory code used when an MPC query does not give one: the code
+          of the telescope that took the detection closest to the date, or the
+          geocentric code when that telescope has none.
+        tags:
+          - objs
+        parameters:
+          - in: path
+            name: obj_id
+            required: true
+            schema:
+              type: string
+        responses:
+          200:
+            content:
+              application/json:
+                schema: Success
+          400:
+            content:
+              application/json:
+                schema: Error
+        """
+        query = self.parse_query(ObjMPCGetQuery)
+        try:
+            date = parse_date(query.date)
+        except (TypeError, arrow.ParserError):
+            return self.error(f'Cannot parse time input value "{query.date}".')
+
+        async with self.AsyncSession() as session:
+            obj = await session.scalar(
+                Obj.select(session.user_or_token).where(Obj.id == obj_id)
+            )
+            if obj is None:
+                return self.error(f"Cannot find object with ID {obj_id}.")
+            obscode = await detection_obscode(session, obj_id, date)
+        return self.success(data={"obscode": obscode})
+
     @auth_or_token
     async def post(self, obj_id: str, *, body: ObjMPCPostBody = None):
         """
@@ -50,14 +133,10 @@ class ObjMPCHandler(BaseHandler):
         """
 
         body = self.parse_body(ObjMPCPostBody)
-        date = body.date
-        if date is None:
-            date = Time.now()
-        else:
-            try:
-                date = Time(arrow.get(date).datetime, format="datetime")
-            except (TypeError, arrow.ParserError):
-                return self.error(f'Cannot parse time input value "{date}".')
+        try:
+            date = parse_date(body.date)
+        except (TypeError, arrow.ParserError):
+            return self.error(f'Cannot parse time input value "{body.date}".')
 
         limiting_magnitude = body.limiting_magnitude
         try:
@@ -71,14 +150,16 @@ class ObjMPCHandler(BaseHandler):
         except Exception:
             return self.error("Cannot read in search radius.")
 
-        obscode = body.obscode
-
         async with self.AsyncSession() as session:
             obj = await session.scalar(
                 Obj.select(session.user_or_token, mode="update").where(Obj.id == obj_id)
             )
             if obj is None:
                 return self.error(f"Cannot find object with ID {obj_id}.")
+
+            obscode = (body.obscode or "").strip() or await detection_obscode(
+                session, obj_id, date
+            )
 
             year = date.strftime("%Y")
             month = date.strftime("%m")
@@ -124,7 +205,7 @@ class ObjMPCHandler(BaseHandler):
                 lambda: query_mpc(obj_id, self.associated_user_object.id, url),
             )
 
-            return self.success()
+            return self.success(data={"obscode": obscode})
 
 
 # Row: "<designation>  <RA hh mm ss.s>  <Dec ±dd mm ss>  ...".

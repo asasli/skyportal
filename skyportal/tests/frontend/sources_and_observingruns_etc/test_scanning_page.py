@@ -42,7 +42,7 @@ def open_scan_filters(page):
 
 
 def toggle_classifications(page, *names):
-    page.locator("//div[@id='classifications-select']").first.click()
+    page.locator("//*[@id='classifications-select']").first.click()
     for name in names:
         option = page.locator(f"//li[@data-value='{name}']").first
         selected = option.get_attribute("aria-selected") == "true"
@@ -293,9 +293,7 @@ def test_candidate_saved_status_filtering(
     page.locator("//li[@data-value='notSavedToAnyAccessible']").first.click()
     search_candidates(page)
 
-    expect(
-        page.locator('//*[contains(., "Found 1 candidates.")]').first
-    ).to_be_visible()
+    expect(page.locator('//*[contains(., "Found 1 candidate.")]').first).to_be_visible()
 
     open_scan_filters(page)
     page.locator("//*[@data-testid='savedStatusSelect']").first.click()
@@ -522,8 +520,11 @@ def test_submit_annotations_sorting(
     expect(
         page.locator(f'//a[@data-testid="{public_candidate.id}"]').first
     ).to_be_visible()
-    open_candidate_annotations(page, public_candidate.id)
-    open_candidate_annotations(page, public_candidate2.id)
+    cards_open_on_annotations = page.locator(
+        '//button[@aria-pressed and normalize-space(.)="Annotations"]'
+    )
+    cards_open_on_annotations.click()
+    expect(cards_open_on_annotations).to_have_attribute("aria-pressed", "true")
 
     expect(
         page.locator(
@@ -542,8 +543,6 @@ def test_submit_annotations_sorting(
             f'//*[contains(@data-testid, "candidate-1")]//a[@data-testid="{public_candidate2.id}"]'
         ).first
     ).to_be_visible()
-    open_candidate_annotations(page, public_candidate.id)
-    open_candidate_annotations(page, public_candidate2.id)
 
     expect(
         page.locator(
@@ -660,14 +659,12 @@ def test_candidate_classifications_filter_searchable(
     page.goto(f"/become_user/{user.id}")
     page.goto("/candidates")
     open_scan_filters(page)
-    page.locator("//div[@id='classifications-select']").first.click()
+    page.locator("//*[@id='classifications-select']").first.click()
     # Both options present before searching.
     expect(page.locator("//li[@data-value='Algol']").first).to_be_visible()
     expect(page.locator("//li[@data-value='AGN']").first).to_be_visible()
     # Typing in the search box filters the option list.
-    page.locator('//input[@data-testid="classifications-select-search"]').first.fill(
-        "algol"
-    )
+    page.locator('//input[@id="classifications-select"]').first.fill("algol")
     expect(page.locator("//li[@data-value='Algol']").first).to_be_visible()
     expect(page.locator("//li[@data-value='AGN']").first).to_be_hidden()
 
@@ -969,7 +966,7 @@ def test_candidate_lightcurve_renders(
     search_candidates(page)
     expect(page.locator(f'//a[@data-testid="{candidate_id}"]').first).to_be_visible()
 
-    # Vega renders the lightcurve into a .vega-embed svg; it never appears if Vega
+    # Vega renders the lightcurve into a .vega-embed canvas; it stays blank if Vega
     # throws on the frozen photometry data.
     expect_vega_plot(page.locator(".vega-embed").first)
     assert not any("not extensible" in err for err in page_errors), page_errors

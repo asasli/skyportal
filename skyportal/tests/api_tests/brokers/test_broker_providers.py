@@ -290,6 +290,13 @@ def test_boom_query_alerts_infers_survey_from_object_id(monkeypatch):
     }
 
 
+def test_boom_get_alert_infers_lsst_from_solar_system_object_id(monkeypatch):
+    calls = _capture_boom_request(monkeypatch)
+    broker = _MockBroker({"survey": "ZTF"})
+    BOOMBROKER.get_alert(broker, "sso21164706861823058", None, permissions=None)
+    assert calls[0]["json"]["catalog_name"] == "LSST_alerts"
+
+
 def test_save_as_source_infers_survey_from_object_id(monkeypatch):
     """Saving an LSST object through a broker whose altdata defaults to ZTF must
     ingest it as LSST, not as ZTF bands ('ztfz' is not a real filter)."""
@@ -856,7 +863,7 @@ def test_build_photometry_groups_flux_and_mag_space():
             },
         ],
         "fp_hists": [
-            # magnitude space: mag=20 at zp=23.9 -> flux = 10**(-0.4*(20-23.9))
+            # magnitude space: mag=20 at zp=8.9 -> flux = 10**(-0.4*(20-8.9))
             {
                 "jd": 2459001.5,
                 "band": "r",
@@ -872,7 +879,7 @@ def test_build_photometry_groups_flux_and_mag_space():
     assert g["mjd"] == [59000.0, 59001.0]
     assert g["filter"] == ["ztfg", "ztfr"]
     assert g["flux"][0] == 100.0 * 1e-9
-    assert g["flux"][1] == pytest.approx(10.0 ** (-0.4 * (20.0 - 23.9)))
+    assert g["flux"][1] == pytest.approx(10.0 ** (-0.4 * (20.0 - 8.9)))
 
 
 def test_build_photometry_groups_negative_subtraction_is_negative_flux():
@@ -892,7 +899,7 @@ def test_build_photometry_groups_negative_subtraction_is_negative_flux():
     }
     groups = build_photometry_groups("ZTF1", "ZTF", data, 42, {("ZTF", 1): [10]})
     g = groups[("ZTF", 1)]
-    flux = 10.0 ** (-0.4 * (20.0 - 23.9))
+    flux = 10.0 ** (-0.4 * (20.0 - 8.9))
     assert g["flux"] == pytest.approx([flux, -flux, -flux, flux])
     assert all(e > 0 for e in g["fluxerr"])
 
@@ -900,8 +907,8 @@ def test_build_photometry_groups_negative_subtraction_is_negative_flux():
 def test_build_photometry_groups_winter_flux_scale_and_zeropoint():
     """WINTER flux (nJy) is scaled to Jy and takes the Jy zeropoint, 8.9.
 
-    ZTF's 23.9 belongs to the magnitude path and its uJy scale. Using it here
-    would put every point about 15 magnitudes too faint.
+    A 23.9 zeropoint, the uJy one, would put every point about 15 magnitudes
+    too faint.
     """
     import math
 

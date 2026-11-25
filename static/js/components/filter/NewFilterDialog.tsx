@@ -10,10 +10,17 @@ import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 
-import { useGetBrokersQuery } from "../../ducks/brokers";
+import { showNotification } from "baselayer/components/Notifications";
+
+import {
+  useGetBrokersQuery,
+  usePostBrokerFilterVersionMutation,
+} from "../../ducks/brokers";
 import { useAddGroupFilterMutation } from "../../ducks/filter";
 import { useGetGroupsQuery } from "../../ducks/groups";
 import { useGetStreamsQuery } from "../../ducks/streams";
+import { useAppDispatch } from "../../types/hooks";
+import SearchableValueSelect from "../SearchableValueSelect";
 
 interface NewFilterDialogProps {
   open: boolean;
@@ -21,6 +28,7 @@ interface NewFilterDialogProps {
   brokerId?: number;
   groupId?: number;
   streamId?: number;
+  version?: { altdata: any[]; filters?: any };
 }
 
 const NewFilterDialog = ({
@@ -29,9 +37,12 @@ const NewFilterDialog = ({
   brokerId,
   groupId,
   streamId,
+  version,
 }: NewFilterDialogProps) => {
   const navigate = useNavigate();
+  const dispatch = useAppDispatch();
   const [addGroupFilter] = useAddGroupFilterMutation();
+  const [postVersion] = usePostBrokerFilterVersionMutation();
   const { data: groups } = useGetGroupsQuery();
   const { data: streams } = useGetStreamsQuery();
   const { data: brokers = [] } = useGetBrokersQuery();
@@ -60,7 +71,20 @@ const NewFilterDialog = ({
       stream_id: stream,
       broker_id: broker || null,
     });
-    if (data) navigate(`/filter/${data.id}`);
+    if (!data) return;
+    if (version && broker !== "") {
+      const saved = await postVersion({
+        brokerId: broker,
+        filterId: data.id,
+        ...version,
+      });
+      if ("error" in saved) {
+        dispatch(
+          showNotification("Filter created without its pipeline.", "error"),
+        );
+      }
+    }
+    navigate(`/filter/${data.id}`);
   };
 
   return (
@@ -77,34 +101,22 @@ const NewFilterDialog = ({
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-            <TextField
-              select
+            <SearchableValueSelect
               size="small"
               label="Group"
-              value={group}
+              options={groups?.userAccessible || []}
+              value={group === "" ? null : group}
               disabled={groupId !== undefined}
-              onChange={(e) => setSelectedGroup(Number(e.target.value))}
-            >
-              {(groups?.userAccessible || []).map((g) => (
-                <MenuItem key={g.id} value={g.id}>
-                  {g.name}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField
-              select
+              onChange={(id: number | null) => setSelectedGroup(id ?? "")}
+            />
+            <SearchableValueSelect
               size="small"
               label="Stream"
-              value={stream}
+              options={(streams as { id: number; name: string }[]) || []}
+              value={stream === "" ? null : stream}
               disabled={streamId !== undefined}
-              onChange={(e) => setSelectedStream(Number(e.target.value))}
-            >
-              {((streams as { id: number; name: string }[]) || []).map((s) => (
-                <MenuItem key={s.id} value={s.id}>
-                  {s.name}
-                </MenuItem>
-              ))}
-            </TextField>
+              onChange={(id: number | null) => setSelectedStream(id ?? "")}
+            />
             {filterBrokers.length > 0 && (
               <TextField
                 select

@@ -160,26 +160,39 @@ const buildSchema = (service: any, photometry: any[] | undefined) => {
   };
 };
 
-const FieldGrid = ({ properties }: any) => (
-  <Box
-    sx={{
-      display: "grid",
-      gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-      gap: 2,
-    }}
-  >
-    {properties.filter((p: any) => !p.hidden).map((p: any) => p.content)}
-  </Box>
-);
+const FieldGrid = ({ properties, schema }: any) => {
+  const visible = properties.filter((p: any) => !p.hidden);
+  const isFlag = (p: any) => schema?.properties?.[p.name]?.type === "boolean";
+  return (
+    <Stack spacing={1}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          gap: 2,
+        }}
+      >
+        {visible.filter((p: any) => !isFlag(p)).map((p: any) => p.content)}
+      </Box>
+      <Box sx={{ display: "flex", flexWrap: "wrap", columnGap: 3 }}>
+        {visible.filter(isFlag).map((p: any) => p.content)}
+      </Box>
+    </Stack>
+  );
+};
 
 interface AnalysisFormProps {
   obj_id: string;
   analysisResourceType?: string;
+  analysisTypes?: string[];
+  onStarted?: () => void;
 }
 
 const AnalysisForm = ({
   obj_id,
   analysisResourceType = "obj",
+  analysisTypes,
+  onStarted,
 }: AnalysisFormProps) => {
   const dispatch = useAppDispatch();
   const [startAnalysis] = useStartAnalysisMutation();
@@ -194,8 +207,17 @@ const AnalysisForm = ({
     () => (associatedGcnsData as any)?.gcns ?? [],
     [associatedGcnsData],
   );
-  const { data: analysisServiceList = [], isLoading: servicesLoading } =
+  const { data: allAnalysisServices = [], isLoading: servicesLoading } =
     useGetAnalysisServicesQuery();
+  const analysisServiceList = useMemo(
+    () =>
+      analysisTypes
+        ? allAnalysisServices.filter((s: any) =>
+            analysisTypes.includes(s.analysis_type),
+          )
+        : allAnalysisServices,
+    [allAnalysisServices, analysisTypes],
+  );
   const { data: groupsData, isLoading: groupsLoading } = useGetGroupsQuery();
   const userAccessibleGroups = groupsData?.userAccessible;
   const singleUserGroup = groupsData?.user?.find(
@@ -336,6 +358,7 @@ const AnalysisForm = ({
           `Analysis started with ${serviceLabel(selectedService) || "service"}.`,
         ),
       );
+      onStarted?.();
     } catch (error: any) {
       dispatch(
         showNotification(
@@ -349,38 +372,42 @@ const AnalysisForm = ({
 
   return (
     <Stack spacing={2}>
+      <SearchableSelect
+        options={serviceOptions}
+        value={selectedService}
+        onChange={(_e: any, value: any) =>
+          setSelectedServiceId(value?.id ?? null)
+        }
+        getOptionLabel={serviceLabel}
+        groupBy={(option: any) =>
+          ANALYSIS_TYPE_LABELS[option?.analysis_type] ||
+          option?.analysis_type ||
+          "Other"
+        }
+        getOptionDisabled={(option: any) => !serviceHasRequiredInputs(option)}
+        isOptionEqualToValue={(option: any, value: any) =>
+          option?.id === value?.id
+        }
+        label="Service"
+        textFieldProps={{
+          name: "analysisServiceSelect",
+          "data-testid": "analysisServiceSelect",
+        }}
+      />
+      {selectedService.description && (
+        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          {selectedService.description}
+        </Typography>
+      )}
       <Box
         sx={{
           display: "flex",
           flexWrap: "wrap",
-          alignItems: "flex-end",
+          alignItems: "center",
           columnGap: 3,
           rowGap: 1,
         }}
       >
-        <SearchableSelect
-          options={serviceOptions}
-          value={selectedService}
-          onChange={(_e: any, value: any) =>
-            setSelectedServiceId(value?.id ?? null)
-          }
-          getOptionLabel={serviceLabel}
-          groupBy={(option: any) =>
-            ANALYSIS_TYPE_LABELS[option?.analysis_type] ||
-            option?.analysis_type ||
-            "Other"
-          }
-          getOptionDisabled={(option: any) => !serviceHasRequiredInputs(option)}
-          isOptionEqualToValue={(option: any, value: any) =>
-            option?.id === value?.id
-          }
-          label="Start New Analysis"
-          textFieldProps={{
-            name: "analysisServiceSelect",
-            "data-testid": "analysisServiceSelect",
-          }}
-          sx={{ flex: "1 1 320px" }}
-        />
         <FormControlLabel
           control={
             <Switch
@@ -390,7 +417,7 @@ const AnalysisForm = ({
               data-testid="analysis-run-privately"
             />
           }
-          label="Run privately (results and annotation visible only to me)"
+          label="Run privately"
         />
         {!runPrivately && (
           <GroupShareSelect
@@ -400,11 +427,6 @@ const AnalysisForm = ({
           />
         )}
       </Box>
-      {selectedService.description && (
-        <Typography variant="body2" sx={{ color: "text.secondary" }}>
-          {selectedService.description}
-        </Typography>
-      )}
       <Stack spacing={2} data-testid="analysis-service-request-form">
         {fileKeys.map((key) => (
           <Box key={key}>

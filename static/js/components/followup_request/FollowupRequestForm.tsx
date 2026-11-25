@@ -6,9 +6,6 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
-import InputLabel from "@mui/material/InputLabel";
-import MenuItem from "@mui/material/MenuItem";
-import Select from "@mui/material/Select";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutlineOutlined";
@@ -25,12 +22,14 @@ import { useGetAllocationsApiClassnameQuery } from "../../ducks/allocations";
 import { useSubmitFollowupRequestMutation } from "../../ducks/source";
 import GroupShareSelect from "../group/GroupShareSelect";
 import Button from "../Button";
+import SearchableValueSelect from "../SearchableValueSelect";
 import {
   isSomeActiveRangeOrNoRange,
   rangeIsActive,
 } from "../allocation/AllocationTable";
 import { localeSafeFields } from "./LocaleSafeNumberField";
 import { allocationLabel } from "../../utils/format";
+import VlaFollowupButton, { type VlaRubinAlert } from "./VlaFollowupButton";
 
 const DAY_MS = 24 * 3600 * 1000;
 
@@ -97,6 +96,7 @@ interface FollowupRequestFormProps {
   obj_id: string;
   instrumentList: any[];
   instrumentFormParams: Record<string, any>;
+  vlaRubinAlert?: VlaRubinAlert;
   requestType?: string;
 }
 
@@ -104,6 +104,7 @@ const FollowupRequestForm = ({
   obj_id,
   instrumentList,
   instrumentFormParams,
+  vlaRubinAlert,
   requestType = "triggered",
 }: FollowupRequestFormProps) => {
   const dispatch = useAppDispatch();
@@ -111,7 +112,7 @@ const FollowupRequestForm = ({
   const { data: telescopeList = [] } = useGetTelescopesQuery();
   const { data: allocationListApiClassname = [] } =
     useGetAllocationsApiClassnameQuery();
-  const allGroups = useGetGroupsQuery().data?.all;
+  const allGroups = useGetGroupsQuery().data?.all ?? [];
   const defaultAllocationId = (useGetProfileQuery().data?.preferences as any)
     ?.followupDefault;
   const [selectedAllocationId, setSelectedAllocationId] =
@@ -124,30 +125,103 @@ const FollowupRequestForm = ({
   const schemaKey = isForcedPhotometry
     ? "formSchemaForcedPhotometry"
     : "formSchema";
+  const canRequestVla = requestType === "triggered" && vlaRubinAlert != null;
 
   const allocations = useMemo<any[]>(
     () =>
-      allocationListApiClassname.filter(
-        (allocation: any) =>
-          instrumentFormParams[allocation.instrument_id]?.[schemaKey] != null &&
-          allocation.types.includes(requestType),
-      ),
-    [allocationListApiClassname, instrumentFormParams, schemaKey, requestType],
+      allocationListApiClassname.filter((allocation) => {
+        const params = instrumentFormParams[allocation.instrument_id];
+        return (
+          allocation.types?.includes(requestType) &&
+          (params?.[schemaKey] != null ||
+            (canRequestVla &&
+              params?.externalFollowupForm?.type === "vla_rubin"))
+        );
+      }),
+    [
+      allocationListApiClassname,
+      instrumentFormParams,
+      requestType,
+      schemaKey,
+      canRequestVla,
+    ],
   );
   const allocation =
     allocations.find(({ id }) => id === selectedAllocationId) ?? allocations[0];
 
   if (!allocation) {
     return (
-      <h3>
-        {`No allocations with an API class ${
-          isForcedPhotometry ? "(for forced photometry) " : ""
-        }where found...`}
-      </h3>
+      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+        {isForcedPhotometry
+          ? "No forced photometry allocation available"
+          : "No follow-up allocation available"}
+      </Typography>
     );
   }
-  if (!allGroups?.length || !telescopeList.length || !instrumentList.length) {
+  if (!allGroups.length || !telescopeList.length || !instrumentList.length) {
     return <CircularProgress color="secondary" />;
+  }
+
+  const instrumentParams = instrumentFormParams[allocation.instrument_id];
+  const getRequestOptionLabel = (option: any) =>
+    allocationLabel(option, instrumentList, telescopeList, allGroups);
+
+  const requestSelect = (
+    <SearchableValueSelect
+      id={
+        isForcedPhotometry
+          ? "forcedPhotometryAllocationSelect"
+          : "followupRequestAllocationSelect"
+      }
+      label="Allocation"
+      options={allocations}
+      getOptionLabel={getRequestOptionLabel}
+      value={allocation.id}
+      onChange={(value) => {
+        setSelectedAllocationId(value);
+        setSelectedGroupIds(null);
+      }}
+      renderOptionContent={(option) => (
+        <>
+          {getRequestOptionLabel(option)}
+          {!isSomeActiveRangeOrNoRange(option.validity_ranges) && (
+            <Tooltip
+              title={
+                instrumentFormParams[option.instrument_id]?.externalFollowupForm
+                  ? "This allocation is currently inactive."
+                  : "This allocation is currently inactive. You can still submit requests for valid future dates."
+              }
+              arrow
+            >
+              <Typography
+                component="span"
+                sx={{ fontStyle: "italic", color: "grey" }}
+              >
+                {" (inactive)"}
+              </Typography>
+            </Tooltip>
+          )}
+        </>
+      )}
+      disableClearable
+      fullWidth
+    />
+  );
+
+  const externalForm = instrumentParams.externalFollowupForm;
+  if (canRequestVla && externalForm?.type === "vla_rubin") {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mb: 2 }}>
+        {requestSelect}
+        {isSomeActiveRangeOrNoRange(allocation.validity_ranges) ? (
+          <VlaFollowupButton alert={vlaRubinAlert} formUrl={externalForm.url} />
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            This allocation is currently inactive.
+          </Typography>
+        )}
+      </Box>
+    );
   }
 
   const groupIds = selectedGroupIds ?? defaultGroupIds(allocation);
@@ -155,7 +229,7 @@ const FollowupRequestForm = ({
     uiSchema,
     methodsImplemented,
     [schemaKey]: baseSchema,
-  } = instrumentFormParams[allocation.instrument_id];
+  } = instrumentParams;
 
   const submitFollowupRequest = async (formData: any) => {
     setIsSubmitting(true);
@@ -243,52 +317,7 @@ const FollowupRequestForm = ({
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mb: 2 }}>
-      <Box>
-        <InputLabel id="allocationSelectLabel">Allocation</InputLabel>
-        <Select
-          inputProps={{ MenuProps: { disableScrollLock: true } }}
-          labelId="allocationSelectLabel"
-          value={allocation.id}
-          onChange={(e) => {
-            setSelectedAllocationId(e.target.value);
-            setSelectedGroupIds(null);
-          }}
-          name={
-            isForcedPhotometry
-              ? "forcedPhotometryAllocationSelect"
-              : "followupRequestAllocationSelect"
-          }
-          fullWidth
-        >
-          {allocations.map((option) => (
-            <MenuItem
-              value={option.id}
-              key={option.id}
-              sx={{ whiteSpace: "break-spaces" }}
-            >
-              {allocationLabel(
-                option,
-                instrumentList,
-                telescopeList,
-                allGroups,
-              )}
-              {!isSomeActiveRangeOrNoRange(option.validity_ranges) && (
-                <Tooltip
-                  title="This allocation is currently inactive. You can still submit requests for valid future dates."
-                  arrow
-                >
-                  <Typography
-                    component="span"
-                    sx={{ fontStyle: "italic", color: "grey" }}
-                  >
-                    {" (inactive)"}
-                  </Typography>
-                </Tooltip>
-              )}
-            </MenuItem>
-          ))}
-        </Select>
-      </Box>
+      {requestSelect}
       <Box
         sx={{
           display: "flex",

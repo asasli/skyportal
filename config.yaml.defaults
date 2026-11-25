@@ -24,8 +24,8 @@ app:
       developed at Caltech, UC Berkeley, the University of Minnesota, and
       Université Paris-Saclay.
     homepage_url: https://skyportal.io
-    docs_url: https://skyportal.io/docs/
-    api_docs_url: https://skyportal.io/docs/api.html
+    docs_url: https://docs.skyportal.io/
+    api_docs_url: https://docs.skyportal.io/api.html
     repository_url: https://github.com/skyportal/skyportal
     funding: >-
       SkyPortal development is funded by the Moore Foundation, Heising Simons
@@ -251,6 +251,9 @@ app:
   # TTT API endpoint
   ttt_endpoint: https://dto.ttt.lightbridges.es/api
 
+  # ATCA rapid response (NAPA over-ride) service
+  atca_endpoint: https://www.narrabri.atnf.csiro.au/cgi-bin/obstools/rapid_response/rapid_response_service.py
+
   ztf:
     protocol: https
     host: kowalski.caltech.edu
@@ -404,6 +407,8 @@ app:
       anonymous_ok: true
     - path: "/deployments"
       component: deployment/Deployments
+    - path: "/feedback"
+      component: feedback/Feedback
     - path: "/runs"
       component: observing_run/ObservingRunPage
     - path: "/run/:id"
@@ -447,6 +452,8 @@ app:
       component: DBStats
     - path: "/source_statistics"
       component: SourceStatistics
+    - path: "/similarity"
+      component: similarity/SimilarityPage
     - path: "/gcn_events"
       component: gcn/GcnEvents
       anonymous_ok: true
@@ -488,6 +495,8 @@ app:
       component: sharing_service/SharingServicesPage
     - path: "/sharing_service/:id/submissions"
       component: sharing_service/SharingServiceSubmissionsPage
+    - path: "/sharing_services/tns_classifications"
+      component: sharing_service/TNSClassificationsPage
     - path: "/moving_objects/obsplan"
       component: moving_object/MovingObjectObsPlanPage
 
@@ -569,6 +578,10 @@ app:
         - name: Source Statistics
           icon: ScatterPlot
           url: /source_statistics
+
+        - name: Similarity
+          icon: BubbleChart
+          url: /similarity
 
         - name: About
           icon: Info
@@ -732,6 +745,8 @@ app:
     # Let a reasoning model think before it answers. It roughly doubles how long
     # a question takes, for an answer that is quoting tool results either way.
     thinking: false
+    # Empty: not sent, for models that reject it.
+    temperature: 0
     # Budget for a whole question, across all its round-trips.
     answer_timeout: 180
     # Characters of one tool result the model sees. A result larger than this is
@@ -741,11 +756,15 @@ app:
     max_context_messages: 40
     request_timeout: 300
     stall_timeout: 45
-    fallback:
-      base_url:
-      model: ""
-      api_key: ""
+    # Tried in order, each with base_url, model, api_key and temperature.
+    fallback: []
     fallback_period: 300
+    # Monthly USD budget shown under the chat, estimated from prices (USD per million tokens).
+    monthly_limit:
+    prices:
+      claude-sonnet-5-5:
+        input: 2
+        output: 10
     # Master switch for autonomous triage: on completion
     analysis_triage:
       enabled: false
@@ -1013,6 +1032,7 @@ services:
     # - slack
     # - sn_analysis_service
     # - spectral_cube_analysis_service
+    # - telegram
     # - thumbnail_queue
     # - tns_retrieval_queue
 
@@ -1023,6 +1043,7 @@ zygote:
     - ngsf_analysis_service
     - spectral_cube_analysis_service
     - health_monitor
+    - rspack
 
 # Alert brokers (BOOM, Fink, Lasair, ...) are configured at runtime as
 # `Broker` database records (name + provider class + encrypted credentials), not
@@ -1188,6 +1209,7 @@ twilio: # TODO: DEPRECATED Twilio Sendgrid no longer offers a free tier. Use SMT
   # Twilio SMS API configs
   # These values must be valid ones from the Twilio API console
   from_number:
+  alphanumeric_sender_id:
   sms_account_sid:
   sms_auth_token:
 smtp:
@@ -1235,6 +1257,10 @@ image_grayscale_params:
 slack:
   microservice_port: 64100
   expected_url_preamble: "https://hooks.slack.com/"
+
+telegram:
+  # From @BotFather. Each instance needs its own bot.
+  bot_token:
 
 spectrum_types:
   types:
@@ -1456,6 +1482,11 @@ additional_bandpasses:
     transmission: [0, 1, 1, 0]
     description: "Argus rho tophat, 560-700 nm"
     color: "#D71F26"
+  - name: "askap-943MHz"
+    filterset: "askap"
+    wavelength: [3.116e+09, 3.131e+09, 3.227e+09, 3.243e+09]
+    transmission: [0, 1, 1, 0]
+    description: "ASKAP tophat centered at 943 MHz"
 
 user:
   default_role: "Full user"
@@ -1701,7 +1732,8 @@ health_monitor:
 # once the object crosses the threshold. The threshold lives on each DefaultAnalysis:
 # min_detections (total, any filter) and an optional min_detections_per_filter dict
 # (e.g. {"ztfg": 2, "ztfr": 2}), read from the precomputed PhotStat (SkyPortal's own
-# detection threshold, forced photometry excluded). Not configured here; these are
+# detection threshold, forced photometry excluded). require_redshift: true also
+# defers it until the object has a positive redshift. Not configured here; these are
 # only the sweep cadence and how far back to look for newly-active sources.
 analysis_rerun:
   interval_seconds: 3600

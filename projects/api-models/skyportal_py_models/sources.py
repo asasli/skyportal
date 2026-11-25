@@ -225,6 +225,7 @@ class SourceResponse(BaseModel):
     redshift: float | None = None
     redshift_error: float | None = None
     redshift_origin: str | None = None
+    redshift_type: Literal["spectroscopic", "photometric"] | None = None
     redshift_history: list[dict[str, Any]] | None = None
     host_id: int | None = None
     summary: str | None = None
@@ -246,7 +247,6 @@ class SourceResponse(BaseModel):
     origin: str | None = None
     alias: list[str] | None = None
     healpix: int | None = None
-    detect_photometry_count: int | None = None
     # Obj.to_dict strips this; the source handlers add it back by hand.
     internal_key: str | None = None
 
@@ -449,6 +449,7 @@ class SourcePost(BaseModel):
     redshift: float | None = None
     redshift_error: float | None = None
     redshift_origin: str | None = None
+    redshift_type: Literal["spectroscopic", "photometric"] | None = None
     host_id: int | None = None
     summary: str | None = None
     summary_history: list[dict[str, Any]] | None = None
@@ -465,7 +466,6 @@ class SourcePost(BaseModel):
     score: float | None = None
     origin: str | None = None
     alias: list[str] | None = None
-    detect_photometry_count: int | None = None
     group_ids: list[int] | None = None
     refresh_source: bool | None = None
     ignore_if_in_group_ids: dict[str, list[int]] | None = None

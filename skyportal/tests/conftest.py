@@ -24,6 +24,7 @@ from skyportal.models import (
     AssistantMessage,
     AssistantQuery,
     AssistantQuerySubscription,
+    AssistantUsage,
     Broker,
     BrokerCredential,
     Candidate,
@@ -165,6 +166,7 @@ from skyportal.models import (
     Telescope,
     TermsOfServiceAcceptance,
     Thumbnail,
+    TNSRetrievalRequest,
     Topic,
     TopicSource,
     TopicSubscription,
@@ -6095,6 +6097,26 @@ def public_assistant_message(user):
 
 
 @pytest.fixture()
+def assistant_usage():
+    usage = AssistantUsage(
+        model="claude-sonnet-5-5", prompt_tokens=100, completion_tokens=10, cost=0.0003
+    )
+    DBSession.add(usage)
+    DBSession.commit()
+    usage_id = usage.id
+    yield usage
+    row = (
+        DBSession()
+        .execute(sa.select(AssistantUsage).filter(AssistantUsage.id == usage_id))
+        .scalars()
+        .first()
+    )
+    if row is not None:
+        DBSession().delete(row)
+        DBSession().commit()
+
+
+@pytest.fixture()
 def public_assistant_query(user, public_group):
     query = AssistantQuery(
         owner_id=user.id,
@@ -7359,6 +7381,23 @@ def public_source_interest(public_source, user_no_groups):
         .execute(sa.select(SourceInterest).filter(SourceInterest.id == interest_id))
         .scalars()
         .first()
+    )
+    if obj is not None:
+        DBSession().delete(obj)
+        DBSession().commit()
+
+
+@pytest.fixture()
+def public_tns_retrieval_request(public_source, user_no_groups):
+    request = TNSRetrievalRequest(
+        obj_id=public_source.id, user_id=user_no_groups.id, radius=2.0
+    )
+    DBSession.add(request)
+    DBSession.commit()
+    request_id = request.id
+    yield request
+    obj = DBSession().scalar(
+        sa.select(TNSRetrievalRequest).where(TNSRetrievalRequest.id == request_id)
     )
     if obj is not None:
         DBSession().delete(obj)

@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
+import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
@@ -14,7 +15,8 @@ import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
 
 import { showNotification } from "baselayer/components/Notifications";
-import { useAddMPCMutation } from "../../ducks/source";
+import { useAddMPCMutation, useGetMPCObscodeQuery } from "../../ducks/source";
+import { useGetTelescopesQuery } from "../../ducks/telescopes";
 import { useAppDispatch } from "../../types/hooks";
 import Button from "../Button";
 
@@ -27,15 +29,19 @@ interface UpdateSourceMPCProps {
     first_detected?: string;
     [key: string]: any;
   };
+  button?: boolean;
 }
 
-const UpdateSourceMPC = ({ source }: UpdateSourceMPCProps) => {
+const UpdateSourceMPC = ({ source, button = false }: UpdateSourceMPCProps) => {
   const dispatch = useAppDispatch();
   const [addMPC] = useAddMPCMutation();
   const [dialogOpen, setDialogOpen] = useState(false);
   const {
     register,
+    control,
     handleSubmit,
+    setValue,
+    getFieldState,
     formState: { isSubmitting },
   } = useForm({
     defaultValues: {
@@ -44,24 +50,45 @@ const UpdateSourceMPC = ({ source }: UpdateSourceMPCProps) => {
       ).slice(0, 16),
       search_radius: 1,
       limiting_magnitude: 24,
-      obscode: "500",
+      obscode: "",
     },
   });
-  const field = (
-    name: "date" | "search_radius" | "limiting_magnitude" | "obscode",
-  ) => {
+  const date = useWatch({ control, name: "date" });
+  const { data: telescopes = [] } = useGetTelescopesQuery(undefined, {
+    skip: !dialogOpen,
+  });
+  const { data: defaultObscode } = useGetMPCObscodeQuery(
+    { id: source.id, date },
+    { skip: !dialogOpen || !date },
+  );
+
+  useEffect(() => {
+    if (defaultObscode && !getFieldState("obscode").isDirty) {
+      setValue("obscode", defaultObscode.obscode);
+    }
+  }, [defaultObscode, getFieldState, setValue]);
+
+  const observatories = useMemo(() => {
+    const names: Record<string, string[]> = { 500: ["Geocentric"] };
+    telescopes.forEach(({ mpc_obscode, nickname }) => {
+      if (mpc_obscode) (names[mpc_obscode] ??= []).push(nickname);
+    });
+    return names;
+  }, [telescopes]);
+
+  const field = (name: "date" | "search_radius" | "limiting_magnitude") => {
     const { ref, ...rest } = register(name, {
-      valueAsNumber: name === "search_radius" || name === "limiting_magnitude",
+      valueAsNumber: name !== "date",
     });
     return { ...rest, inputRef: ref, size: "small" as const, required: true };
   };
 
   const onSubmit = async (formData: Record<string, any>) => {
-    const { error } = await addMPC({ id: source.id, formData });
+    const { data, error } = await addMPC({ id: source.id, formData });
     if (error) return;
     dispatch(
       showNotification(
-        "MPC query sent. The MPC name will appear once the MPC answers.",
+        `MPC query sent from observatory ${data?.obscode}. The MPC name will appear once the MPC answers.`,
       ),
     );
     setDialogOpen(false);
@@ -70,13 +97,26 @@ const UpdateSourceMPC = ({ source }: UpdateSourceMPCProps) => {
   return (
     <>
       <Tooltip title="Search the Minor Planet Center for a known solar system object at this position">
-        <IconButton
-          size="small"
-          data-testid="updateMPCIconButton"
-          onClick={() => setDialogOpen(true)}
-        >
-          <TravelExploreIcon fontSize="small" />
-        </IconButton>
+        {button ? (
+          <Button
+            variant="outlined"
+            color="primary"
+            size="small"
+            data-testid="updateMPCIconButton"
+            onClick={() => setDialogOpen(true)}
+            sx={{ py: 0, px: 0.5, minWidth: 0 }}
+          >
+            <TravelExploreIcon fontSize="small" />
+          </Button>
+        ) : (
+          <IconButton
+            size="small"
+            data-testid="updateMPCIconButton"
+            onClick={() => setDialogOpen(true)}
+          >
+            <TravelExploreIcon fontSize="small" />
+          </IconButton>
+        )}
       </Tooltip>
       <Dialog
         open={dialogOpen}
@@ -118,11 +158,47 @@ const UpdateSourceMPC = ({ source }: UpdateSourceMPCProps) => {
                 label="Limiting magnitude"
                 slotProps={{ htmlInput: { step: 0.1 } }}
               />
-              <TextField
-                {...field("obscode")}
-                label="Observatory code"
-                helperText="500 is the geocenter"
-                sx={{ gridColumn: "1 / -1" }}
+              <Controller
+                name="obscode"
+                control={control}
+                render={({ field: { value, onChange } }) => (
+                  <Autocomplete
+                    freeSolo
+                    options={Object.keys(observatories)}
+                    filterOptions={(codes, { inputValue }) =>
+                      codes.includes(inputValue)
+                        ? codes
+                        : codes.filter((code) =>
+                            `${code} ${observatories[code]?.join(" ")}`
+                              .toUpperCase()
+                              .includes(inputValue),
+                          )
+                    }
+                    inputValue={value}
+                    onInputChange={(_event, code) =>
+                      onChange(code.toUpperCase())
+                    }
+                    renderOption={({ key, ...props }, code) => (
+                      <Box component="li" key={key} {...props} sx={{ gap: 1 }}>
+                        <b>{code}</b>
+                        {observatories[code]?.join(", ")}
+                      </Box>
+                    )}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        size="small"
+                        label="Observatory code"
+                        helperText={
+                          value === defaultObscode?.obscode
+                            ? "Telescope of the closest detection"
+                            : " "
+                        }
+                      />
+                    )}
+                    sx={{ gridColumn: "1 / -1" }}
+                  />
+                )}
               />
             </Box>
           </DialogContent>

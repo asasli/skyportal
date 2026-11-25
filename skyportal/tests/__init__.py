@@ -17,6 +17,21 @@ session.trust_env = (
 cfg = load_config(config_files=["test_config.yaml"])
 
 
+def tach_is_online():
+    try:
+        response = requests.post(
+            "https://heasarc.gsfc.nasa.gov/wsgi-scripts/tach/gcn_v2/tach.wsgi/graphql_fast",
+            json={
+                "query": '{ allEventDetails(date1:"2018-01-16" date2:"2018-01-16") { totalCount } }'
+            },
+            timeout=5,
+        )
+        response.raise_for_status()
+        return not response.json().get("errors")
+    except Exception:
+        return False
+
+
 def api(
     method, endpoint, data=None, params=None, host=None, token=None, raw_response=False
 ):
@@ -191,11 +206,19 @@ def expect_vega_plot(scope, count=None):
     """
     from playwright.sync_api import expect
 
-    plots = scope.locator("svg.marks")
+    plots = scope.locator("svg.marks, canvas.marks")
     expect(plots.first).to_be_visible()
     if count is not None:
         expect(plots).to_have_count(count)
-    expect(scope.locator("svg.marks [class*='mark-']")).not_to_have_count(0)
+    canvas = scope.locator("canvas.marks").first
+    if canvas.count():
+        scope.page.wait_for_function(
+            "c => c.getContext('2d').getImageData(0, 0, c.width, c.height)"
+            ".data.some((v, i) => i % 4 === 3 && v > 0)",
+            arg=canvas.element_handle(),
+        )
+    else:
+        expect(scope.locator("svg.marks [class*='mark-']")).not_to_have_count(0)
 
 
 def open_preferences_panel(page, slug):

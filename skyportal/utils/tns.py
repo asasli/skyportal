@@ -206,6 +206,31 @@ def tns_classification_id(classification):
     return TNS_CLASSIFICATION_IDS.get(str(classification).strip().lower())
 
 
+def missing_spectrum_credits(spectrum):
+    """The roles a TNS classification report credits that this spectrum leaves empty.
+
+    Needs ``pis``, ``observers``, ``reducers`` and ``instrument`` loaded.
+    """
+    missing = []
+    if not spectrum.pis:
+        missing.append("PI")
+    if not spectrum.observers and not spectrum.instrument.default_observer:
+        missing.append("observers")
+    if not spectrum.reducers:
+        missing.append("reducers")
+    return missing
+
+
+def auto_report_blocker(spectrum):
+    """Why a classification resting on this spectrum cannot go to TNS on its own, or None."""
+    if not spectrum.auto_report_to_tns:
+        return "spectrum not opted in"
+    missing = missing_spectrum_credits(spectrum)
+    if missing:
+        return f"spectrum has no {', '.join(missing)}"
+    return None
+
+
 def tns_spectrum_type_id(spectrum_type):
     """The TNS spectrum type id for a SkyPortal spectrum type."""
     return TNS_SPECTRUM_TYPE_IDS.get(
@@ -708,45 +733,6 @@ def get_internal_names(api_key, headers, tns_name=None):
         )
 
     return internal_names
-
-
-def get_tns(
-    obj_id=None,
-    radius=2.0,
-    user_id=None,
-    timeout=2,
-):
-    """Get TNS data for an object
-
-    Parameters
-    ----------
-    obj_id : str, optional
-        TNS object id, by default None
-    radius : float, optional
-        Radius to search around the object, by default 2.0
-    user_id : str, optional
-        User ID, by default None
-    timeout : int, optional
-        Timeout for the request, by default 2
-    """
-    if obj_id is None:
-        raise ValueError("obj_id")
-
-    request_body = {
-        "obj_id": obj_id,
-        "radius": radius,
-        "user_id": user_id,
-    }
-
-    tns_microservice_url = (
-        f"http://{cfg['hosts.tns_retrieval_queue']}:{cfg['ports.tns_retrieval_queue']}"
-    )
-
-    resp = requests.post(tns_microservice_url, json=request_body, timeout=timeout)
-    if resp.status_code != 200:
-        log(
-            f"TNS request failed for {str(request_body['obj_id'])} by user ID {request_body['user_id']}: {resp.content}"
-        )
 
 
 def _resolve_tns_instrument(tns_instrument_id, session):

@@ -29,6 +29,7 @@ from ...models import (
 from ...utils.app import get_app_base_url
 from ...utils.email import button, send_email
 from ...utils.naive_datetime import utcnow_naive
+from ...utils.notifications import wants_in_app
 from ...utils.user_applications import (
     ADMIN_ACL,
     deciding_acls,
@@ -51,6 +52,11 @@ SUBMITTED_MESSAGE = (
 DISABLED_MESSAGE = "Account applications are not enabled in this deployment."
 
 
+def application_prefs(user):
+    notifications = (user.preferences or {}).get("notifications") or {}
+    return notifications.get("user_application") or {}
+
+
 def notify_deciders(session, application, endorser):
     """Tell whoever may act on the application it is waiting, and return their IDs.
 
@@ -71,14 +77,20 @@ def notify_deciders(session, application, endorser):
             .where(UserRole.user_id == User.id, RoleACL.acl_id == ADMIN_ACL)
             .exists(),
         )
-        recipients = session.scalars(sa.select(User).where(holds_admin_acl)).all()
+        recipients = session.scalars(
+            sa.select(User).where(holds_admin_acl, User.is_bot.is_not(True))
+        ).all()
         notification = "has applied for an account"
         email = "has applied for an account."
+    recipients = [
+        r for r in recipients if application_prefs(r).get("active") is not False
+    ]
     if not recipients:
         return []
 
     url = "/user_applications"
-    for recipient in recipients:
+    in_app = [r for r in recipients if wants_in_app(r.preferences, "user_application")]
+    for recipient in in_app:
         session.add(
             UserNotification(
                 user_id=recipient.id,
@@ -89,11 +101,16 @@ def notify_deciders(session, application, endorser):
                 url=url,
             )
         )
-    recipient_ids = [recipient.id for recipient in recipients]
+    recipient_ids = [recipient.id for recipient in in_app]
     if cfg.get("user_applications.disable_emailing", False):
         return recipient_ids
 
-    addresses = [r.contact_email for r in recipients if r.contact_email]
+    addresses = [
+        r.contact_email
+        for r in recipients
+        if r.contact_email
+        and (application_prefs(r).get("email") or {}).get("active") is not False
+    ]
     if addresses:
         # The applicant is unauthenticated, so their words never reach the email as markup.
         applicant = html.escape(
@@ -182,9 +199,10 @@ class UserApplicationPatchBody(BaseModel):
         "belong to each of them. Defaults to none, which still lands the "
         "applicant in the sitewide public group.",
     )
-    role: Literal["Full user", "View only"] = Field(
+    role: Literal["Super admin", "Full user", "View only"] = Field(
         default="Full user",
-        description="The role the new user will have in the system.",
+        description="The role the new user will have in the system. "
+        "Super admin can only be granted by a system admin.",
     )
     declineReason: str | None = Field(
         default=None, description="Why the application was declined."
@@ -490,6 +508,9 @@ class UserApplicationHandler(BaseHandler):
                         "You may only grant streams you have yourself; "
                         f"no access to stream(s): {sorted(missing)}"
                     )
+
+            if body.role == "Super admin" and not self.current_user.is_system_admin:
+                return self.error("Only system admins can grant the Super admin role.")
 
             role = await session.scalar(
                 Role.select(self.current_user).where(Role.id == body.role)

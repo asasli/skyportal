@@ -19,8 +19,6 @@ import DialogTitle from "@mui/material/DialogTitle";
 import Chip from "@mui/material/Chip";
 import Switch from "@mui/material/Switch";
 import Typography from "@mui/material/Typography";
-import Select from "@mui/material/Select";
-import MenuItem from "@mui/material/MenuItem";
 import Box from "@mui/material/Box";
 import InfoIcon from "@mui/icons-material/InfoOutlined";
 import FormGroup from "@mui/material/FormGroup";
@@ -28,12 +26,18 @@ import FormLabel from "@mui/material/FormLabel";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Checkbox from "@mui/material/Checkbox";
 import FormControl from "@mui/material/FormControl";
+import TextField from "@mui/material/TextField";
 import { showNotification } from "baselayer/components/Notifications";
 
 import { useAppDispatch } from "../../types/hooks";
 import Button from "../Button";
 import SearchableSelect from "../SearchableSelect";
-import StyledDataGridBase, { DataGridToolbar } from "../StyledDataGrid";
+import SearchableSelectWidget from "../SearchableSelectWidget";
+import SearchableValueSelect from "../SearchableValueSelect";
+import StyledDataGridBase, {
+  DataGridToolbar,
+  FULL_PAGE_HEIGHT,
+} from "../StyledDataGrid";
 import TransferList from "../TransferList";
 import ConfirmDeletionDialog from "../ConfirmDeletionDialog";
 import {
@@ -56,6 +60,7 @@ import { useGetInstrumentsQuery } from "../../ducks/instruments";
 import { CustomCheckboxWidgetMuiTheme } from "../CustomCheckboxWidget";
 import { userLabel } from "../../utils/format";
 import { useGetUsersQuery } from "../../ducks/users";
+import testingModeText from "./testingMode";
 
 const Form = withTheme(CustomCheckboxWidgetMuiTheme as any);
 
@@ -150,6 +155,9 @@ const SharingServiceGroup = ({
   );
   const [autoPublishTnsClassifications, setAutoPublishTnsClassifications] =
     useState(sharingServiceGroup.auto_share_classifications_to_tns);
+  const [classificationDelayHours, setClassificationDelayHours] = useState(
+    sharingServiceGroup.auto_share_classifications_delay_hours ?? 0,
+  );
   const [autoPublishHermes, setAutoPublishHermes] = useState(
     sharingServiceGroup.auto_share_to_hermes,
   );
@@ -166,6 +174,10 @@ const SharingServiceGroup = ({
 
   const groupName =
     groupsLookup[sharingServiceGroup.group_id]?.name || "loading...";
+  const canAutoPublish =
+    sharingService.enable_sharing_with_tns ||
+    sharingService.enable_sharing_with_hermes ||
+    sharingService.enable_sharing_with_trove;
   const ids = {
     sharing_service_id: sharingServiceGroup.sharing_service_id,
     group_id: sharingServiceGroup.group_id,
@@ -176,6 +188,9 @@ const SharingServiceGroup = ({
     setAutoPublishTns(sharingServiceGroup.auto_share_to_tns);
     setAutoPublishTnsClassifications(
       sharingServiceGroup.auto_share_classifications_to_tns,
+    );
+    setClassificationDelayHours(
+      sharingServiceGroup.auto_share_classifications_delay_hours ?? 0,
     );
     setAutoPublishHermes(sharingServiceGroup.auto_share_to_hermes);
     setAutoPublishTrove(sharingServiceGroup.auto_share_to_trove);
@@ -226,6 +241,8 @@ const SharingServiceGroup = ({
       autoPublishTns !== sharingServiceGroup.auto_share_to_tns ||
       autoPublishTnsClassifications !==
         sharingServiceGroup.auto_share_classifications_to_tns ||
+      classificationDelayHours !==
+        (sharingServiceGroup.auto_share_classifications_delay_hours ?? 0) ||
       autoPublishHermes !== sharingServiceGroup.auto_share_to_hermes ||
       autoPublishTrove !== sharingServiceGroup.auto_share_to_trove ||
       autoPublishAllowBots !== sharingServiceGroup.auto_sharing_allow_bots
@@ -237,6 +254,7 @@ const SharingServiceGroup = ({
             owner,
             auto_share_to_tns: autoPublishTns,
             auto_share_classifications_to_tns: autoPublishTnsClassifications,
+            auto_share_classifications_delay_hours: classificationDelayHours,
             auto_share_to_hermes: autoPublishHermes,
             auto_share_to_trove: autoPublishTrove,
             auto_sharing_allow_bots: autoPublishAllowBots,
@@ -288,116 +306,145 @@ const SharingServiceGroup = ({
         />
       </Tooltip>
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="lg">
-        <DialogTitle>Set group parameters and auto publishers</DialogTitle>
+        <DialogTitle>
+          Set group parameters{canAutoPublish && " and auto publishers"}
+        </DialogTitle>
         <DialogContent>
-          <InputLabel>Owner</InputLabel>
-          <Switch
-            checked={owner}
-            onChange={(e) => setOwner(e.target.checked)}
-          />
-          <FormLabel component="legend">Auto publish to</FormLabel>
-          <FormGroup row>
-            <Tooltip
-              title={
-                sharingService.enable_sharing_with_tns
-                  ? ""
-                  : "TNS publishing is disabled for this sharingService."
-              }
-            >
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={autoPublishTns}
-                    onChange={(e) => setAutoPublishTns(e.target.checked)}
-                  />
-                }
-                label="TNS"
-                disabled={!sharingService.enable_sharing_with_tns}
-              />
-            </Tooltip>
-            <Tooltip
-              title={
-                sharingService.enable_sharing_with_tns
-                  ? "Report a classification to TNS when one is added to a source of this group. Human classifications only; sources withheld from TNS are skipped."
-                  : "TNS publishing is disabled for this sharingService."
-              }
-            >
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={autoPublishTnsClassifications}
-                    onChange={(e) =>
-                      setAutoPublishTnsClassifications(e.target.checked)
-                    }
-                  />
-                }
-                label="TNS classifications"
-                disabled={!sharingService.enable_sharing_with_tns}
-              />
-            </Tooltip>
-            <Tooltip
-              title={
-                sharingService.enable_sharing_with_hermes
-                  ? ""
-                  : "Hermes publishing is disabled for this sharingService."
-              }
-            >
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={autoPublishHermes}
-                    onChange={(e) => setAutoPublishHermes(e.target.checked)}
-                  />
-                }
-                label="Hermes"
-                disabled={!sharingService.enable_sharing_with_hermes}
-              />
-            </Tooltip>
-            <Tooltip
-              title={
-                sharingService.enable_sharing_with_trove
-                  ? ""
-                  : "TROVE publishing is disabled for this sharingService."
-              }
-            >
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={autoPublishTrove}
-                    onChange={(e) => setAutoPublishTrove(e.target.checked)}
-                  />
-                }
-                label="TROVE"
-                disabled={!sharingService.enable_sharing_with_trove}
-              />
-            </Tooltip>
-          </FormGroup>
-          {(autoPublishTns ||
-            autoPublishTnsClassifications ||
-            autoPublishHermes ||
-            autoPublishTrove) && (
-            <>
-              <InputLabel>Allow bots to auto publish</InputLabel>
+          <FormControlLabel
+            control={
               <Switch
-                checked={autoPublishAllowBots}
-                onChange={(e) => setAutoPublishAllowBots(e.target.checked)}
+                checked={owner}
+                onChange={(e) => setOwner(e.target.checked)}
               />
+            }
+            label="Owner"
+          />
+          {canAutoPublish && (
+            <>
+              <FormLabel component="legend">Auto publish to</FormLabel>
+              <FormGroup row>
+                <Tooltip
+                  title={
+                    sharingService.enable_sharing_with_tns
+                      ? ""
+                      : "TNS publishing is disabled for this sharingService."
+                  }
+                >
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={autoPublishTns}
+                        onChange={(e) => setAutoPublishTns(e.target.checked)}
+                      />
+                    }
+                    label="TNS"
+                    disabled={!sharingService.enable_sharing_with_tns}
+                  />
+                </Tooltip>
+                <Tooltip
+                  title={
+                    sharingService.enable_sharing_with_tns
+                      ? "Report a classification to TNS when one is added to a source of this group. Human classifications only; sources withheld from TNS are skipped."
+                      : "TNS publishing is disabled for this sharingService."
+                  }
+                >
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={autoPublishTnsClassifications}
+                        onChange={(e) =>
+                          setAutoPublishTnsClassifications(e.target.checked)
+                        }
+                      />
+                    }
+                    label="TNS classifications"
+                    disabled={!sharingService.enable_sharing_with_tns}
+                  />
+                </Tooltip>
+                <Tooltip
+                  title={
+                    sharingService.enable_sharing_with_hermes
+                      ? ""
+                      : "Hermes publishing is disabled for this sharingService."
+                  }
+                >
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={autoPublishHermes}
+                        onChange={(e) => setAutoPublishHermes(e.target.checked)}
+                      />
+                    }
+                    label="Hermes"
+                    disabled={!sharingService.enable_sharing_with_hermes}
+                  />
+                </Tooltip>
+                <Tooltip
+                  title={
+                    sharingService.enable_sharing_with_trove
+                      ? ""
+                      : "TROVE publishing is disabled for this sharingService."
+                  }
+                >
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={autoPublishTrove}
+                        onChange={(e) => setAutoPublishTrove(e.target.checked)}
+                      />
+                    }
+                    label="TROVE"
+                    disabled={!sharingService.enable_sharing_with_trove}
+                  />
+                </Tooltip>
+              </FormGroup>
+              {autoPublishTnsClassifications && (
+                <TextField
+                  type="number"
+                  size="small"
+                  label="Wait before reporting classifications (hours)"
+                  value={classificationDelayHours}
+                  onChange={(e) =>
+                    setClassificationDelayHours(
+                      Math.max(0, parseInt(e.target.value, 10) || 0),
+                    )
+                  }
+                  slotProps={{ htmlInput: { min: 0 } }}
+                  sx={{ mt: 1, mb: 2, width: 320 }}
+                />
+              )}
+              {(autoPublishTns ||
+                autoPublishTnsClassifications ||
+                autoPublishHermes ||
+                autoPublishTrove) && (
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={autoPublishAllowBots}
+                      onChange={(e) =>
+                        setAutoPublishAllowBots(e.target.checked)
+                      }
+                    />
+                  }
+                  label="Allow bots to auto publish"
+                />
+              )}
+              {initialized && (
+                <Box sx={{ minWidth: "70vw", py: 1 }}>
+                  <Typography>Auto publishers</Typography>
+                  <TransferList
+                    left={left}
+                    right={right}
+                    setLeft={setLeft}
+                    setRight={setRight}
+                    leftLabel="Group Users"
+                    rightLabel="AutoPublishers"
+                  />
+                </Box>
+              )}
             </>
           )}
-          {initialized && (
-            <Box sx={{ minWidth: "70vw", py: 1 }}>
-              <Typography>Auto publishers</Typography>
-              <TransferList
-                left={left}
-                right={right}
-                setLeft={setLeft}
-                setRight={setRight}
-                leftLabel="Group Users"
-                rightLabel="AutoPublishers"
-              />
-            </Box>
-          )}
-          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mt: 2 }}>
             <Button primary onClick={updateGroup} disabled={updating}>
               Save
             </Button>
@@ -489,20 +536,13 @@ const SharingServiceGroups = ({
         />
       ))}
       <AddChip title="Add Group" onAdd={handleAdd} disabled={!group}>
-        <FormControl sx={{ mt: "0.4rem", minWidth: "20vw" }}>
-          <InputLabel>Group</InputLabel>
-          <Select
-            label="Group"
-            value={group || ""}
-            onChange={(e) => setGroup(e.target.value)}
-          >
-            {groupOptions.map((groupOption: any) => (
-              <MenuItem key={groupOption.id} value={groupOption.id}>
-                {groupOption.name}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
+        <SearchableValueSelect
+          label="Group"
+          options={groupOptions}
+          value={group}
+          onChange={setGroup}
+          sx={{ mt: "0.4rem", minWidth: "20vw" }}
+        />
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <InputLabel>Owner</InputLabel>
           <Switch
@@ -684,13 +724,15 @@ const SharingServiceCoauthors = ({
 };
 
 const SharingServicesToolbar = ({ onCreate }: { onCreate?: () => void }) => (
-  <DataGridToolbar
-    title="Sharing Services"
-    showExpandAll
-    showColumns={false}
-    showQuickFilter={false}
-    showExport={false}
-  >
+  <DataGridToolbar title="Sharing Services" showExpandAll>
+    <Button
+      component={Link}
+      to="/sharing_services/tns_classifications"
+      size="small"
+      variant="outlined"
+    >
+      TNS classifications
+    </Button>
     {onCreate && (
       <IconButton onClick={onCreate}>
         <AddIcon />
@@ -708,7 +750,10 @@ const MPC_FIELDS = [
   ["telescope_aperture", "MPC telescope aperture (m)"],
   ["telescope_detector", "MPC detector"],
   ["ack_email", "MPC acknowledgement email (if the reviewer has none)"],
+  ["submitters", "MPC default submitters (comma-separated)"],
 ] as const;
+
+const OPTIONAL_MPC_FIELDS = ["ack_email", "submitters"];
 
 const SharingServicesPage = () => {
   const dispatch = useAppDispatch();
@@ -748,6 +793,11 @@ const SharingServicesPage = () => {
   const groupsLookup = lookupById(groups);
   const allGroupsLookup = lookupById(groupsData?.all ?? []);
   const usersLookup = lookupById(useGetUsersQuery().data?.users ?? []);
+  const mpcOnly =
+    enablePublishToMPC &&
+    !enablePublishToTNS &&
+    !enablePublishToHermes &&
+    !enablePublishToTrove;
 
   const submitSharingService = async () => {
     const isEdit = Boolean(sharingServiceToManage?.id);
@@ -776,10 +826,8 @@ const SharingServicesPage = () => {
     const data = {
       name,
       tns_bot_name,
-      acknowledgments,
       owner_group_ids,
-      instrument_ids,
-      stream_ids,
+      ...(!mpcOnly && { acknowledgments, instrument_ids, stream_ids }),
       testing,
       photometry_options: {
         first_and_last_detections,
@@ -864,51 +912,55 @@ const SharingServicesPage = () => {
             default: [],
           },
         }),
-        acknowledgments: {
-          type: "string",
-          title: "Acknowledgments",
-          default: "on behalf of ...",
-          description:
-            "Added at the end of the author list, e.g. 'First Last (Affiliation(s)) ...'",
-        },
-        instrument_ids: {
-          type: "array",
-          title: "Instruments to restrict photometry to",
-          items: {
-            type: "integer",
-            enum: allowedInstruments.map((instrument: any) => instrument.id),
+        ...(!mpcOnly && {
+          acknowledgments: {
+            type: "string",
+            title: "Acknowledgments",
+            default: "on behalf of ...",
+            description:
+              "Added at the end of the author list, e.g. 'First Last (Affiliation(s)) ...'",
           },
-          uniqueItems: true,
-          default:
-            sharingServiceToManage?.instruments?.map((i: any) => i.id) || [],
-        },
-        ...(streams.length > 0 && {
-          stream_ids: {
+          instrument_ids: {
             type: "array",
-            title: "Streams to restrict photometry to (optional)",
+            title: "Instruments to restrict photometry to",
             items: {
               type: "integer",
-              enum: streams.map((stream: any) => stream.id),
+              enum: allowedInstruments.map((instrument: any) => instrument.id),
             },
             uniqueItems: true,
             default:
-              sharingServiceToManage?.streams?.map((s: any) => s.id) || [],
+              sharingServiceToManage?.instruments?.map((i: any) => i.id) || [],
           },
+          ...(streams.length > 0 && {
+            stream_ids: {
+              type: "array",
+              title: "Streams to restrict photometry to (optional)",
+              items: {
+                type: "integer",
+                enum: streams.map((stream: any) => stream.id),
+              },
+              uniqueItems: true,
+              default:
+                sharingServiceToManage?.streams?.map((s: any) => s.id) || [],
+            },
+          }),
         }),
         testing: {
           type: "boolean",
           title: "Testing Mode",
           default: true,
           description:
-            "If enabled, the sharing service will not publish the data but only store the payload in the DB (useful for debugging).",
+            "If enabled, nothing is published: TNS payloads are only stored, Hermes, TROVE and the MPC get their test endpoints.",
         },
-        first_and_last_detections: {
-          type: "boolean",
-          title: "Mandatory first and last detection",
-          default: true,
-          description:
-            "If enabled, the sharing service will only publish objects with both a first and last detection (i.e., at least two detections).",
-        },
+        ...(!mpcOnly && {
+          first_and_last_detections: {
+            type: "boolean",
+            title: "Mandatory first and last detection",
+            default: true,
+            description:
+              "If enabled, the sharing service will only publish objects with both a first and last detection (i.e., at least two detections).",
+          },
+        }),
         ...(enableTNS && {
           tns_bot_name: { type: "string", title: "TNS Bot Name" },
           tns_bot_id: { type: "number", title: "TNS Bot ID" },
@@ -946,9 +998,9 @@ const SharingServicesPage = () => {
       },
       required: [
         "name",
-        "acknowledgments",
-        "instrument_ids",
-        "first_and_last_detections",
+        ...(mpcOnly
+          ? []
+          : ["acknowledgments", "instrument_ids", "first_and_last_detections"]),
         ...(isCreation ? ["owner_group_ids"] : []),
         ...(enableTNS
           ? ["tns_bot_name", "tns_bot_id", "tns_source_group_id"]
@@ -958,9 +1010,9 @@ const SharingServicesPage = () => {
           ? ["trove_username", "trove_password"]
           : []),
         ...(isCreation && enableMPC
-          ? MPC_FIELDS.filter(([key]) => key !== "ack_email").map(
-              ([key]) => `mpc_${key}`,
-            )
+          ? MPC_FIELDS.filter(
+              ([key]) => !OPTIONAL_MPC_FIELDS.includes(key),
+            ).map(([key]) => `mpc_${key}`)
           : []),
       ],
     };
@@ -977,12 +1029,12 @@ const SharingServicesPage = () => {
           {row.testing === true && (
             <Tooltip
               title={
-                <h2>
-                  This sharing service is currently in testing mode. It will not
-                  publish any data to TNS but will store the payload in the
-                  database instead (useful for debugging purposes). For Hermes,
-                  it will publish to the test topic.
-                </h2>
+                <Box sx={{ fontSize: "0.8rem", fontWeight: 500 }}>
+                  Testing mode:
+                  {testingModeText(row).map((line) => (
+                    <div key={line}>- {line}</div>
+                  ))}
+                </Box>
               }
               placement="right"
             >
@@ -999,6 +1051,15 @@ const SharingServicesPage = () => {
       flex: 0.7,
       minWidth: 120,
       sortable: false,
+      valueGetter: (_value: any, row: any) =>
+        [
+          row.enable_sharing_with_tns && "TNS",
+          row.enable_sharing_with_hermes && "Hermes",
+          row.enable_sharing_with_trove && "TROVE",
+          row.enable_sharing_with_mpc && "MPC",
+        ]
+          .filter(Boolean)
+          .join(", "),
       renderCell: ({ row }: any) => (
         <Box sx={chipListSx}>
           {row.enable_sharing_with_tns && (
@@ -1040,7 +1101,28 @@ const SharingServicesPage = () => {
             />
           )}
           {row.enable_sharing_with_mpc && (
-            <Chip size="small" label="MPC" color="primary" variant="outlined" />
+            <Tooltip
+              title={
+                <Box sx={{ fontSize: "0.8rem", fontWeight: 500 }}>
+                  MPC config:
+                  {MPC_FIELDS.filter(([key]) => row.mpc_header?.[key]).map(
+                    ([key, title]) => (
+                      <div key={key}>
+                        - {title.replace(/^MPC /, "")}: {row.mpc_header[key]}
+                      </div>
+                    ),
+                  )}
+                </Box>
+              }
+            >
+              <Chip
+                size="small"
+                label="MPC"
+                icon={<InfoIcon />}
+                color="primary"
+                variant="outlined"
+              />
+            </Tooltip>
           )}
         </Box>
       ),
@@ -1051,6 +1133,11 @@ const SharingServicesPage = () => {
       flex: 1.2,
       minWidth: 170,
       sortable: false,
+      valueGetter: (_value: any, row: any) =>
+        (row.groups || [])
+          .map((group: any) => allGroupsLookup[group.group_id]?.name)
+          .filter(Boolean)
+          .join(", "),
       renderCell: ({ row }: any) => (
         <SharingServiceGroups
           sharingService={row}
@@ -1066,6 +1153,12 @@ const SharingServicesPage = () => {
       flex: 1.4,
       minWidth: 190,
       sortable: false,
+      valueGetter: (_value: any, row: any) =>
+        (row.coauthors || [])
+          .map((coauthor: any) =>
+            userLabel(usersLookup[coauthor.user_id], false, true),
+          )
+          .join(", "),
       renderCell: ({ row }: any) => (
         <SharingServiceCoauthors
           sharingService={row}
@@ -1118,6 +1211,12 @@ const SharingServicesPage = () => {
                   setSharingServiceToManage({
                     ...row,
                     ...row.photometry_options,
+                    ...Object.fromEntries(
+                      MPC_FIELDS.map(([key]) => [
+                        `mpc_${key}`,
+                        row.mpc_header?.[key],
+                      ]),
+                    ),
                   });
                   setEnablePublishToTNS(row.enable_sharing_with_tns);
                   setEnablePublishToHermes(row.enable_sharing_with_hermes);
@@ -1146,7 +1245,7 @@ const SharingServicesPage = () => {
   return (
     <div>
       <StyledDataGrid
-        autoHeight
+        height={FULL_PAGE_HEIGHT}
         rows={[...sharingServicesList].sort(byName)}
         columns={columns}
         getRowId={(row: any) => row.id}
@@ -1275,14 +1374,17 @@ const SharingServicesPage = () => {
             }
             uiSchema={{
               owner_group_ids: {
+                "ui:widget": SearchableSelectWidget,
                 "ui:enumNames": groups.map((group: any) => group.name),
               },
               instrument_ids: {
+                "ui:widget": SearchableSelectWidget,
                 "ui:enumNames": allowedInstruments.map(
                   (instrument: any) => instrument.name,
                 ),
               },
               stream_ids: {
+                "ui:widget": SearchableSelectWidget,
                 "ui:enumNames": streams.map((stream: any) => stream.name),
               },
               trove_password: { "ui:widget": "password" },

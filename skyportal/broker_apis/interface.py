@@ -114,6 +114,12 @@ class BrokerAPI(_Base):
         raise NotImplementedError
 
     @staticmethod
+    def get_hosts(broker, object_ids, session, **kwargs):
+        """The best host galaxy the broker associated with each object, as
+        ``{object_id: host}``, leaving out objects without one."""
+        raise NotImplementedError
+
+    @staticmethod
     def found_by(broker, filter_row, obj_id):
         """Credit for an object one of this broker's filters passed, as
         ``{broker, filter, url}`` with the url of the object on the broker."""
@@ -128,6 +134,14 @@ class BrokerAPI(_Base):
     @staticmethod
     def cone_search(broker, ra, dec, radius, session, **kwargs):
         """Cross-match a position against the broker's archival catalogs."""
+        raise NotImplementedError
+
+    @staticmethod
+    def similar_objects(broker, object_id, session, top_k=10, **kwargs):
+        """Nearest neighbors of an object in the broker's embedding space, as
+        dicts with ``object_id``, ``score`` and optionally ``jd``,
+        ``model_label`` and ``model_probability``, best first. Empty when the
+        object has no embedding."""
         raise NotImplementedError
 
     @staticmethod

@@ -15,10 +15,14 @@ concurrency:
 jobs:
   scope:
     uses: ./.github/workflows/ci_scope.yaml
+    # Repos whose default token is read-only (e.g. forks) only grant this if asked.
+    permissions:
+      contents: read
+      pull-requests: read
 
   test-models:
     needs: scope
-    if: ${{ github.event.pull_request.draft == false && needs.scope.outputs.backend == 'true' }}
+    if: ${{ github.event.pull_request.draft == false && needs.scope.outputs.models == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -139,6 +143,8 @@ jobs:
           #
           echo "localhost:5432:*:skyportal:anything" > ~/.pgpass
           chmod 600 ~/.pgpass
+
+          psql -h localhost -U skyportal -d postgres -c "ALTER SYSTEM SET fsync = off" -c "ALTER SYSTEM SET synchronous_commit = off" -c "ALTER SYSTEM SET full_page_writes = off" -c "SELECT pg_reload_conf()"
 
           createdb -h localhost -U skyportal skyportal_test
           psql -U skyportal -h localhost -c "GRANT ALL PRIVILEGES ON DATABASE skyportal_test TO skyportal;" skyportal_test

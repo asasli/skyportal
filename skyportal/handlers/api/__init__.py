@@ -18,15 +18,21 @@ from .annotation_services import (
     GaiaQueryHandler,
     IRSAQueryWISEHandler,
     PS1QueryHandler,
+    SpherexQueryHandler,
     VizierQueryHandler,
 )
-from .assistant import AssistantConversationHandler, AssistantMessageHandler
+from .assistant import (
+    AssistantConversationHandler,
+    AssistantMessageHandler,
+    AssistantUsageHandler,
+)
 from .assistant_query import AssistantQueryHandler, AssistantQuerySubscriptionHandler
 from .broker import (
     BrokerAlertsHandler,
     BrokerConeSearchHandler,
     BrokerCredentialHandler,
     BrokerCutoutsHandler,
+    BrokerDefaultHostsHandler,
     BrokerDefaultPhotometryHandler,
     BrokerFilterAttachHandler,
     BrokerFilterBackfillHandler,
@@ -236,7 +242,13 @@ from .sharing_service.sharing_service_group_auto_publisher import (
 from .sharing_service.sharing_service_submission import (
     SharingServiceSubmissionHandler,
 )
+from .sharing_service.tns_classifications import TNSClassificationsHandler
 from .shift import ShiftHandler, ShiftSummary, ShiftUserHandler
+from .similarity import (
+    MoreLikeThisHandler,
+    SimilarityVettingHandler,
+    SimilarSourcesHandler,
+)
 from .skymap_trigger import SkymapTriggerAPIHandler
 from .source import (
     FinderChartFacilitiesHandler,

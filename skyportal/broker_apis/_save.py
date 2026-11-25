@@ -11,9 +11,16 @@ from baselayer.log import make_log
 
 log = make_log("broker/save")
 
-# AB zeropoint per survey, matching the units points arrive in: flux in nJy is
-# scaled to Jy and takes 8.9, magnitudes are converted to uJy and take 23.9.
-ZP_PER_SURVEY = {"LSST": 8.9, "ZTF": 23.9, "WINTER": 8.9, "DECAM": 8.9, "ARGUS": 8.9}
+# AB zeropoint per survey: flux in nJy is scaled to Jy and takes 8.9, and
+# magnitudes are converted against the same zeropoint.
+ZP_PER_SURVEY = {
+    "LSST": 8.9,
+    "ZTF": 8.9,
+    "WINTER": 8.9,
+    "DECAM": 8.9,
+    "ARGUS": 8.9,
+    "ASKAP": 8.9,
+}
 
 # Surveys whose filters are not named <survey><band>. Keys are normalized bands,
 # so any survey prefix is already stripped. An unmapped band raises rather than
@@ -28,6 +35,7 @@ BAND_TO_FILTER_PER_SURVEY = {
         "z": "desz",
         "y": "desy",
     },
+    "ASKAP": {"askap-943mhz": "askap-943MHz"},
 }
 
 # A "detection" must clear this S/N unless a Filter's criteria override it. Broker
@@ -321,13 +329,11 @@ def build_photometry_groups(object_id, survey, data, instrument_id, programid2st
 
 async def _flip_stale_positive_points(session, pd):
     """Negate stored copies of pd's negative points that were saved with a positive flux."""
-    import sqlalchemy as sa
-
     from ..handlers.api.photometry import (
         find_duplicate_photometry,
+        full_update_phot_stats,
         standardize_photometry_data,
     )
-    from ..models import Photometry, PhotStat
 
     negative = [i for i, f in enumerate(pd["flux"]) if f is not None and f < 0]
     if not negative:
@@ -353,19 +359,7 @@ async def _flip_stale_positive_points(session, pd):
     for p in stale:
         p.flux = -p.flux
     await session.flush()
-
-    phot_stat = await session.scalar(
-        sa.select(PhotStat).where(PhotStat.obj_id == pd["obj_id"]).with_for_update()
-    )
-    if phot_stat is not None:
-        all_phot = (
-            await session.scalars(
-                sa.select(Photometry).where(Photometry.obj_id == pd["obj_id"])
-            )
-        ).all()
-        phot_stat.full_update(all_phot)
-        for phot in all_phot:
-            session.expunge(phot)
+    await full_update_phot_stats(session, [pd["obj_id"]])
 
 
 async def _ingest_object(
@@ -643,7 +637,11 @@ async def _ingest_object(
                 if mag_space:
                     await _flip_stale_positive_points(session, pd)
                 await add_external_photometry(
-                    pd, user, session, apply_default_share=False
+                    pd,
+                    user,
+                    session,
+                    apply_default_share=False,
+                    update_flux=not mag_space,
                 )
             except Exception as e:
                 log(f"Failed to add photometry for {object_id}: {e}")

@@ -35,6 +35,8 @@ import { useGetInstrumentsQuery } from "../../ducks/instruments";
 import { CustomCheckboxWidgetMuiTheme } from "../CustomCheckboxWidget";
 import { userLabel } from "../../utils/format";
 import { useGetUsersQuery } from "../../ducks/users";
+import testingModeText from "./testingMode";
+import SearchableSelectWidget from "../SearchableSelectWidget";
 
 const Form = withTheme(CustomCheckboxWidgetMuiTheme as any);
 
@@ -241,14 +243,25 @@ const SharingServicesDialog = ({
     const instrument = instrumentList.find(
       (i: any) => i.id === spectrum?.instrument_id,
     );
+    const splitAuthors = (authors?: string | null) =>
+      (authors || "")
+        .split(/,(?![^()]*\))/)
+        .map((author: string) => author.trim())
+        .filter(Boolean);
+    const credited = (external?: string | null, users?: any[] | null) =>
+      external
+        ? splitAuthors(external)
+        : (users || [])
+            .filter((u: any) => !u.is_bot && u.first_name && u.last_name)
+            .map((u: any) => userLabel(u, false, true));
     return [
       ...(classifier && !classifier["is_bot"]
         ? [userLabel(classifier, false, true)]
         : []),
-      ...(instrument?.tns_classification_authors || "")
-        .split(/,(?![^()]*\))/)
-        .map((author: string) => author.trim())
-        .filter(Boolean),
+      ...splitAuthors(instrument?.tns_classification_authors),
+      ...credited(spectrum?.external_pi, spectrum?.pis),
+      ...credited(spectrum?.external_observer, spectrum?.observers),
+      ...credited(spectrum?.external_reducer, spectrum?.reducers),
     ];
   };
 
@@ -381,6 +394,7 @@ const SharingServicesDialog = ({
 
   const uiSchema: any = {
     instrument_ids: {
+      "ui:widget": SearchableSelectWidget,
       "ui:enumNames": allowedInstruments.map(
         (instrument: any) =>
           `${
@@ -391,6 +405,7 @@ const SharingServicesDialog = ({
       ),
     },
     stream_ids: {
+      "ui:widget": SearchableSelectWidget,
       "ui:enumNames": streams.map((stream: any) => stream.name),
     },
     tns_report_type: {
@@ -575,14 +590,12 @@ const SharingServicesDialog = ({
                   {sharingService.testing === true && (
                     <Tooltip
                       title={
-                        <h3>
-                          This Sharing Service is currently in testing mode. It
-                          will not publish any data to TNS but will store the
-                          payload in the database instead (useful for debugging
-                          purposes). For Hermes, it will publish to the test
-                          topic. You can remove it from the sharing services
-                          page.
-                        </h3>
+                        <Box sx={{ fontSize: "0.8rem", fontWeight: 500 }}>
+                          Testing mode:
+                          {testingModeText(sharingService).map((line) => (
+                            <div key={line}>- {line}</div>
+                          ))}
+                        </Box>
                       }
                       placement="right"
                     >

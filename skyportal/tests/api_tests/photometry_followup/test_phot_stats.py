@@ -26,7 +26,7 @@ def test_phot_stats_permissions(upload_data_token, super_admin_token, public_sou
         "DELETE", f"sources/{public_source.id}/phot_stat", token=upload_data_token
     )
     assert status == 403
-    assert "Forbidden" in data["message"]
+    assert "Missing permission: System admin" in data["message"]
 
     status, data = api(
         "PUT",
@@ -35,7 +35,7 @@ def test_phot_stats_permissions(upload_data_token, super_admin_token, public_sou
         data={},
     )
     assert status == 403
-    assert "Forbidden" in data["message"]
+    assert "Missing permission: System admin" in data["message"]
 
     status, data = api(
         "GET",
@@ -58,7 +58,7 @@ def test_phot_stats_permissions(upload_data_token, super_admin_token, public_sou
         data={},
     )
     assert status == 403
-    assert "Forbidden" in data["message"]
+    assert "Missing permission: System admin" in data["message"]
 
     # super user can post a phot stat
     status, data = api(
@@ -1052,6 +1052,92 @@ def test_phot_stat_incremental_matches_full_recompute(
                 )
             assert stored.first_detected_mjd == pytest.approx(fresh.first_detected_mjd)
             assert stored.last_detected_mjd == pytest.approx(fresh.last_detected_mjd)
+
+    asyncio.run(_run())
+
+
+def test_update_flux_overwrites_resent_points(
+    super_admin_token, super_admin_user, public_group, ztf_camera
+):
+    source_id = str(uuid.uuid4())
+    status, data = api(
+        "POST",
+        "sources",
+        data={
+            "id": source_id,
+            "ra": np.random.uniform(0, 360),
+            "dec": np.random.uniform(-90, 90),
+            "group_ids": [public_group.id],
+        },
+        token=super_admin_token,
+    )
+    assert status == 200
+
+    def payload(points):
+        n = len(points)
+        return {
+            "obj_id": [source_id] * n,
+            "instrument_id": ztf_camera.id,
+            "group_ids": [public_group.id],
+            "mjd": [60000.0 + i for i in range(n)],
+            "filter": ["ztfr"] * n,
+            "flux": [p[0] for p in points],
+            "fluxerr": [p[1] for p in points],
+            "zp": [PHOT_ZP] * n,
+            "magsys": ["ab"] * n,
+            "ra": [1.0] * n,
+            "dec": [2.0] * n,
+            "origin": ["reflux-test"] * n,
+        }
+
+    first = [(5e5, 1e4), (6e5, 1e4), (None, 2e5), (8e5, 1e4)]
+    second_copy = [(5e5 * (1 + 1e-6), 1e4)]
+    resent = [
+        (5e5 * (1 + 5e-7), 1e4 * (1 + 5e-7)),
+        (6e5, 1e4),
+        (None, 2e5 * (1 + 5e-7)),
+        (8e11, 1e10),
+        (7e5, 1e4),
+    ]
+
+    def same(p, flux, fluxerr):
+        if flux is None:
+            return (p.flux is None or np.isnan(p.flux)) and p.fluxerr == pytest.approx(
+                fluxerr, rel=1e-12
+            )
+        return p.flux == pytest.approx(flux, rel=1e-12) and p.fluxerr == pytest.approx(
+            fluxerr, rel=1e-12
+        )
+
+    async def _run():
+        async with baselayer_models.async_plain_session_factory() as s:
+            u = await s.get(User, super_admin_user.id)
+            await add_external_photometry(payload(first), u, s)
+            u = await s.get(User, super_admin_user.id)
+            await add_external_photometry(payload(second_copy), u, s)
+            u = await s.get(User, super_admin_user.id)
+            await add_external_photometry(payload(resent), u, s, update_flux=True)
+
+            stored = (
+                await s.scalars(
+                    sa.select(Photometry).where(Photometry.obj_id == source_id)
+                )
+            ).all()
+            by_epoch = [
+                [p for p in stored if p.mjd == 60000.0 + i] for i in range(len(resent))
+            ]
+            assert [len(points) for points in by_epoch] == [2, 1, 1, 2, 1]
+            for points, (flux, fluxerr) in zip(by_epoch, resent):
+                assert any(same(p, flux, fluxerr) for p in points)
+            assert any(same(p, 8e5, 1e4) for p in by_epoch[3])
+
+            phot_stat = await s.scalar(
+                sa.select(PhotStat).where(PhotStat.obj_id == source_id)
+            )
+            fresh = PhotStat(obj_id=source_id)
+            fresh.full_update(stored)
+            assert phot_stat.num_obs_global == fresh.num_obs_global == len(stored)
+            assert phot_stat.peak_mag_global == pytest.approx(fresh.peak_mag_global)
 
     asyncio.run(_run())
 

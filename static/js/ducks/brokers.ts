@@ -58,6 +58,19 @@ export interface BrokerCredentialPatch {
   topic_filter_ids?: Record<string, number[]>;
 }
 
+export interface BrokerHost {
+  objname: string | null;
+  catalog: string | null;
+  ra: number | null;
+  dec: number | null;
+  z: number | null;
+  z_err: number | null;
+  dist_mpc: number | null;
+  sep_arcsec: number | null;
+  sep_kpc: number | null;
+  d_dlr: number | null;
+}
+
 export interface BrokerAlertQuery {
   brokerId: number;
   params: Record<string, string | number | undefined>;
@@ -115,6 +128,7 @@ export const brokersApi = skyportalApi.injectEndpoints({
         url: `api/brokers/${brokerId}/alerts${buildQuery(params)}`,
         responseHandler: parseKeepingIds,
       }),
+      extraOptions: { suppressErrorNotification: true },
     }),
     // The object, not one alert: its brightest alert joined to the detection
     // and non-detection history the broker holds.
@@ -122,6 +136,12 @@ export const brokersApi = skyportalApi.injectEndpoints({
       query: ({ brokerId, objectId }) => ({
         url: `api/brokers/${brokerId}/objects/${objectId}`,
         responseHandler: parseKeepingIds,
+      }),
+    }),
+    getBrokerHosts: build.query<Record<string, BrokerHost> | null, string[]>({
+      query: (objectIds) => ({
+        url: "api/brokers/hosts",
+        params: { objectIds: objectIds.join(",") },
       }),
     }),
     // Cross-match a position against a broker's reference catalogs (Gaia, PS1,
@@ -166,6 +186,14 @@ export const brokersApi = skyportalApi.injectEndpoints({
         method: "POST",
         body: { group_ids: groupIds },
       }),
+    }),
+    getBrokerAlertSchema: build.query<
+      any,
+      { brokerId: number; survey: string }
+    >({
+      query: ({ brokerId, survey }) =>
+        `api/brokers/${brokerId}/filter_modules?survey=${survey}&elements=schema`,
+      transformResponse: (response: any) => response?.schema ?? null,
     }),
     // Filters this broker manages (skyportal Filter rows with broker altdata).
     getBrokerFilters: build.query<BrokerFilter[], number>({
@@ -216,6 +244,22 @@ export const brokersApi = skyportalApi.injectEndpoints({
         body: { query, autosave },
       }),
       invalidatesTags: ["Broker"],
+    }),
+    postBrokerFilterVersion: build.mutation<
+      { id: number },
+      { brokerId: number; filterId: number; altdata: any[]; filters?: any }
+    >({
+      query: ({ brokerId, filterId, ...body }) => ({
+        url: `api/brokers/${brokerId}/filters/${filterId}`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["Broker"],
+    }),
+    // Topics (Fink tags, Lasair stream names, ...) the current user can route to.
+    // Served by providers implementing ``available_topics``.
+    getBrokerAvailableTopics: build.query<{ topics: string[] }, number>({
+      query: (brokerId) => `api/brokers/${brokerId}/credentials/topics`,
     }),
     // Registered provider classes + their config form schemas / capabilities.
     getBrokerAPIs: build.query<Record<string, BrokerAPIInfo>, void>({
@@ -326,14 +370,18 @@ export const {
   useGetBrokerAlertsQuery,
   useLazyGetBrokerAlertsQuery,
   useGetBrokerObjectQuery,
+  useGetBrokerHostsQuery,
   useLazyGetBrokerConeSearchQuery,
   useGetSourceIfSavedQuery,
   useSaveBrokerObjectAsSourceMutation,
   useLazyTestBrokerFilterQuery,
+  useGetBrokerAlertSchemaQuery,
   useGetBrokerFiltersQuery,
   useGetFilterCatalogQuery,
   useAttachFilterToBrokerMutation,
   useSaveBrokerFilterMutation,
+  usePostBrokerFilterVersionMutation,
+  useGetBrokerAvailableTopicsQuery,
   useGetBrokerAPIsQuery,
   useCreateBrokerMutation,
   useUpdateBrokerMutation,

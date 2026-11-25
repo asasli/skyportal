@@ -602,6 +602,16 @@ export const sourceApi = skyportalApi.injectEndpoints({
       }),
       invalidatesTags: (_result, _error, sourceID) => sourceTag(sourceID),
     }),
+    fetchSpherex: build.mutation<
+      RouteData<"POST /api/sources/{obj_id}/annotations/spherex">,
+      number | string
+    >({
+      query: (sourceID) => ({
+        url: `api/sources/${sourceID}/annotations/spherex`,
+        method: "POST",
+      }),
+      invalidatesTags: (_result, _error, sourceID) => sourceTag(sourceID),
+    }),
     fetchWise: build.mutation<
       RouteData<"POST /api/sources/{obj_id}/annotations/irsa">,
       number | string
@@ -671,6 +681,15 @@ export const sourceApi = skyportalApi.injectEndpoints({
         method: "DELETE",
       }),
       invalidatesTags: (_result, _error, id) => sourceTag(id),
+    }),
+    getMPCObscode: build.query<
+      { obscode: string },
+      { id: number | string; date: string }
+    >({
+      query: ({ id, date }) => ({
+        url: `api/sources/${id}/mpc`,
+        params: { date },
+      }),
     }),
     addMPC: build.mutation<
       any,
@@ -826,9 +845,11 @@ export const {
   useFetchVizierMutation,
   useFetchDatalabMutation,
   useFetchPS1Mutation,
+  useFetchSpherexMutation,
   useAddTNSMutation,
   useAddHostMutation,
   useRemoveHostMutation,
+  useGetMPCObscodeQuery,
   useAddMPCMutation,
   useAddGCNCrossmatchMutation,
   useStartAnalysisMutation,

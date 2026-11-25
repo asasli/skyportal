@@ -43,6 +43,7 @@ from ....models import (
     Comment,
     Filter,
     FollowupRequest,
+    GcnEventObj,
     Group,
     Listing,
     Localization,
@@ -118,6 +119,9 @@ def update_redshift_history_if_relevant(request_data, obj, user):
         origin = request_data.get("redshift_origin")
         if isinstance(origin, str) and origin.strip():
             history_params["origin"] = origin
+
+        if request_data.get("redshift_type"):
+            history_params["type"] = request_data["redshift_type"]
 
         redshift_history.append(history_params)
         obj.redshift_history = redshift_history
@@ -202,7 +206,7 @@ def serialize_comment(comment):
 
 
 async def include_requested_obj_data(
-    obj_id, candidate, query, session, include_phot_annotations
+    obj_id, candidate, query, session, include_phot_annotations, annotations=None
 ):
     """Add object data to the candidate dictionary based on the query
     parameters. Async equivalent of the previous sync version — uses
@@ -219,6 +223,8 @@ async def include_requested_obj_data(
     session : ``sqlalchemy.ext.asyncio.AsyncSession``
     include_phot_annotations : bool
         Whether to include photometry annotations
+    annotations : list of `Annotation`, optional
+        The object's annotations, when already loaded for a whole page
 
     Returns
     -------
@@ -315,12 +321,11 @@ async def include_requested_obj_data(
             associated_objs, key=lambda x: x["separation"]
         )
 
-    candidate["annotations"] = sorted(
-        await fetch_obj_data(
+    if annotations is None:
+        annotations = await fetch_obj_data(
             Annotation, [selectinload(Annotation.groups)], obj_id, session
-        ),
-        key=lambda x: x.origin,
-    )
+        )
+    candidate["annotations"] = sorted(annotations, key=lambda x: x.origin)
     return candidate
 
 
@@ -363,6 +368,31 @@ async def attach_comment_counts(candidates, session):
         total, bots = counts.get(candidate["id"], (0, 0))
         candidate["comment_count"] = total
         candidate["bot_comment_count"] = bots
+
+
+async def attach_gcn_matches(candidates, session):
+    if not candidates:
+        return
+    result = await session.scalars(
+        GcnEventObj.select(session.user_or_token)
+        .options(selectinload(GcnEventObj.localization))
+        .where(GcnEventObj.obj_id.in_([c["id"] for c in candidates]))
+        .where(GcnEventObj.status != "rejected")
+        .order_by(GcnEventObj.dateobs.desc())
+    )
+    matches_by_obj = {}
+    for row in result.all():
+        matches_by_obj.setdefault(row.obj_id, []).append(
+            {
+                "dateobs": row.dateobs,
+                "status": row.status,
+                "localization_name": row.localization.localization_name
+                if row.localization
+                else None,
+            }
+        )
+    for candidate in candidates:
+        candidate["gcn_matches"] = matches_by_obj.get(candidate["id"], [])
 
 
 def add_computed_fields(candidate_info, obj):
@@ -678,6 +708,7 @@ class CandidateHandler(BaseHandler):
                 add_computed_fields(candidate_info, c)
                 await attach_tags([candidate_info], session)
                 await attach_comment_counts([candidate_info], session)
+                await attach_gcn_matches([candidate_info], session)
                 candidate_info = recursive_to_dict(candidate_info)
 
                 query_size = sizeof(candidate_info)
@@ -872,6 +903,16 @@ class CandidateHandler(BaseHandler):
             q = sa.select(Obj.id).join(
                 candidate_subquery, Obj.id == candidate_subquery.c.obj_id
             )
+            if query.movingObjects:
+                linked_track = (
+                    sa.select(Annotation.id)
+                    .where(
+                        Annotation.obj_id == Obj.id,
+                        Annotation.data.has_key("track_id"),
+                    )
+                    .exists()
+                )
+                q = q.where(sa.or_(Obj.is_roid.is_(True), linked_track))
             accessible_ids = await accessible_group_ids_async(
                 session.user_or_token, session
             )
@@ -1459,6 +1500,17 @@ class CandidateHandler(BaseHandler):
                 for classification in classifications_result.unique().all():
                     classifications_by_obj[classification.obj_id].append(classification)
 
+            annotations_by_obj = defaultdict(list)
+            if page_obj_ids:
+                annotations_result = await session.scalars(
+                    Annotation.select(
+                        session.user_or_token,
+                        options=[selectinload(Annotation.groups)],
+                    ).where(Annotation.obj_id.in_(page_obj_ids))
+                )
+                for annotation in annotations_result.unique().all():
+                    annotations_by_obj[annotation.obj_id].append(annotation)
+
             linked_by_obj = await linked_thumbnails(page_obj_ids, session)
             stack_of = query_results.pop("stacks", {})
 
@@ -1496,9 +1548,15 @@ class CandidateHandler(BaseHandler):
                         if filter_id in group_id_by_filter_id
                     ]
                     obj.found_by = []
+                    obj.broker_id = None
                     for filter_id in filter_ids_by_obj.get(obj.id, []):
                         f = filters_by_id.get(filter_id)
                         broker = f and brokers_by_id.get(f.broker_id)
+                        if broker and (
+                            obj.broker_id is None
+                            or hasattr(broker.broker_class, "get_track")
+                        ):
+                            obj.broker_id = broker.id
                         credit = broker and broker.broker_class.found_by(
                             broker, f, obj.id
                         )
@@ -1538,6 +1596,7 @@ class CandidateHandler(BaseHandler):
                         query,
                         session,
                         include_phot_annotations=False,
+                        annotations=annotations_by_obj[obj.id],
                     )
 
                     selected_groups_annotations = []
@@ -1556,6 +1615,7 @@ class CandidateHandler(BaseHandler):
 
             await attach_tags(candidate_list, session)
             await attach_comment_counts(candidate_list, session)
+            await attach_gcn_matches(candidate_list, session)
 
             query_results["candidates"] = candidate_list
             query_results = recursive_to_dict(query_results)

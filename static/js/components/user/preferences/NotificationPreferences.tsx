@@ -18,6 +18,7 @@ import { useGetFiltersQuery } from "../../../ducks/filter";
 import { useGetGroupsQuery } from "../../../ducks/groups";
 import { useNotificationTarget } from "../../notifications/target";
 import { useGetAllocationsApiClassnameQuery } from "../../../ducks/allocations";
+import { useGetConfigQuery } from "../../../ducks/config";
 
 interface Option {
   id: number;
@@ -444,6 +445,10 @@ const NotificationPreferences = () => {
   // cards that user can actually receive.
   const { profile } = useNotificationTarget();
   const isAdmin = profile?.permissions?.includes("System admin") === true;
+  const { userApplicationsEnabled } = (useGetConfigQuery().data as any) ?? {};
+  const decidesApplications =
+    userApplicationsEnabled === true &&
+    profile?.permissions?.includes("Manage users") === true;
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       <DeliveryChannels />
@@ -471,14 +476,26 @@ const NotificationPreferences = () => {
           channels={[]}
         />
       )}
-      {isAdmin && (
+      {decidesApplications && (
         <NotificationCard
-          type="feedback"
-          title="Feedback by email or Slack"
-          text="As an admin, you get an in-app notification for every new message. They are on the Deployments page."
-          channels={["email", "slack"]}
+          type="user_application"
+          title="Account applications"
+          text="When someone applies for an account. They are on the Account applications page."
+          defaultActive
+          defaultChannels={["email"]}
+          channels={["email"]}
         />
       )}
+      <NotificationCard
+        type="feedback"
+        title={isAdmin ? "Feedback" : "Feedback by email or Slack"}
+        text={
+          isAdmin
+            ? "As an admin, when someone sends a message. They are on the Feedback page."
+            : "You get an in-app notification when an admin replies to one of your messages."
+        }
+        channels={["email", "slack"]}
+      />
     </Box>
   );
 };

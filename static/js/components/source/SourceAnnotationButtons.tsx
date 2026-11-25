@@ -1,7 +1,9 @@
 import { useState } from "react";
 
+import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
 import Button from "../Button";
+import softButtonsSx from "../softButtons";
 
 import SourceAnnotationButtonPlugins from "./SourceAnnotationButtonPlugins";
 
@@ -12,6 +14,7 @@ import {
   useFetchVizierMutation,
   useFetchDatalabMutation,
   useFetchPS1Mutation,
+  useFetchSpherexMutation,
 } from "../../ducks/source";
 import type { Source } from "../../types";
 
@@ -26,6 +29,7 @@ const SourceAnnotationButtons = ({ source }: SourceAnnotationButtonsProps) => {
   const [fetchDatalab] = useFetchDatalabMutation();
   const [fetchPS1] = useFetchPS1Mutation();
   const [fetchAlma] = useFetchAlmaMutation();
+  const [fetchSpherex] = useFetchSpherexMutation();
 
   const [isSubmittingAnnotationGaia, setIsSubmittingAnnotationGaia] =
     useState<any>(null);
@@ -93,14 +97,22 @@ const SourceAnnotationButtons = ({ source }: SourceAnnotationButtonsProps) => {
     setIsSubmittingAnnotationAlma(null);
   };
 
+  const [isSubmittingAnnotationSpherex, setIsSubmittingAnnotationSpherex] =
+    useState<any>(null);
+  const handleAnnotationSpherex = async (id: string) => {
+    setIsSubmittingAnnotationSpherex(id);
+    await fetchSpherex(id);
+    setIsSubmittingAnnotationSpherex(null);
+  };
+
   return (
-    <div
-      style={{
+    <Box
+      sx={(theme) => ({
+        ...softButtonsSx(theme),
         display: "flex",
         flexWrap: "wrap",
-        flexDirection: "row",
-        gap: "0.5rem",
-      }}
+        gap: 0.75,
+      })}
     >
       {isSubmittingAnnotationGaia === source.id ? (
         <div>
@@ -238,8 +250,25 @@ const SourceAnnotationButtons = ({ source }: SourceAnnotationButtonsProps) => {
           ALMA
         </Button>
       )}
+      {isSubmittingAnnotationSpherex === source.id ? (
+        <div>
+          <CircularProgress />
+        </div>
+      ) : (
+        <Button
+          secondary
+          onClick={() => {
+            handleAnnotationSpherex(source.id);
+          }}
+          size="small"
+          type="submit"
+          data-testid={`spherexRequest_${source.id}`}
+        >
+          SPHEREx
+        </Button>
+      )}
       <SourceAnnotationButtonPlugins {...({ source } as any)} />
-    </div>
+    </Box>
   );
 };
 
